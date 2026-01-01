@@ -36,3 +36,6 @@
 
 ## Temp cleanup mitigation
 - Added an optional onedir `LighthouseLayoutCoachOverlay.exe` helper to avoid PyInstaller onefile `_MEI*` temp cleanup warnings when starting/stopping VR mode.
+
+## Installer stability
+- Installer now ships the app as an onedir build (no onefile extraction), which avoids intermittent `Failed to load Python DLL (python311.dll)` errors caused by `_MEI*` extraction/AV contention.

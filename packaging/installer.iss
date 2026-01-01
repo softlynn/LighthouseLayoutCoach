@@ -42,7 +42,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Name: "{localappdata}\{#MyAppName}\tmp"
 
 [Files]
-Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; Install the onedir build to avoid onefile _MEI extraction issues.
+Source: "..\dist\LighthouseLayoutCoach\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Onedir overlay helper (avoids onefile temp extraction/cleanup dialogs when starting/stopping VR mode)
 #ifdef BundleOverlayHelper
 Source: "{#OverlayHelperPath}"; DestDir: "{app}\overlay"; Flags: ignoreversion

@@ -44,11 +44,24 @@ if (!(Test-Path "packaging\\LighthouseLayoutCoach.spec")) {
   throw "Missing packaging\\LighthouseLayoutCoach.spec"
 }
 
+# Build the portable onefile EXE (kept for releases).
 pyinstaller --noconfirm packaging\\LighthouseLayoutCoach.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed with exit code $LASTEXITCODE" }
 
 Write-Host "Built EXE: dist\\LighthouseLayoutCoach.exe"
 if (!(Test-Path "dist\\LighthouseLayoutCoach.exe")) { throw "Expected dist\\LighthouseLayoutCoach.exe not found" }
+
+# Build an onedir app folder for the installer (avoids onefile _MEI extraction issues).
+if (Test-Path "packaging\\LighthouseLayoutCoachOnedir.spec") {
+  pyinstaller --noconfirm packaging\\LighthouseLayoutCoachOnedir.spec
+  if ($LASTEXITCODE -ne 0) { throw "Onedir build failed with exit code $LASTEXITCODE" }
+  if (!(Test-Path "dist\\LighthouseLayoutCoach\\LighthouseLayoutCoach.exe")) {
+    throw "Expected dist\\LighthouseLayoutCoach\\LighthouseLayoutCoach.exe not found"
+  }
+  Write-Host "Built onedir app: dist\\LighthouseLayoutCoach\\LighthouseLayoutCoach.exe"
+} else {
+  throw "Missing packaging\\LighthouseLayoutCoachOnedir.spec"
+}
 
 # Build an onedir overlay helper to avoid onefile _MEI extraction/cleanup warnings when starting/stopping VR mode.
 if (Test-Path "packaging\\LighthouseLayoutCoachOverlay.spec") {
