@@ -97,6 +97,9 @@ class DashboardOverlayClient:
         self._events_polled_since = 0
         self._events_last_rate_time = time.monotonic()
         self._logged_first_event = False
+        self._logged_first_mouse_move = False
+        self._mouse_px: Optional[Tuple[float, float]] = None
+        self._hover_button_id: Optional[str] = None
         self._click_toggle = False
         self._click_count = 0
 
@@ -325,6 +328,21 @@ class DashboardOverlayClient:
             _safe_call(self.overlay, "SetOverlayMouseScale", "setOverlayMouseScale", self.handle, scale)
         except Exception:
             pass
+        # Ensure the dashboard overlay is marked interactive for pointer/controller ray input.
+        try:
+            flags_to_enable = [
+                "VROverlayFlags_MakeOverlaysInteractiveIfVisible",
+                "VROverlayFlags_VisibleInDashboard",
+                "VROverlayFlags_SendVRTouchpadEvents",
+                "VROverlayFlags_SendVRSmoothScrollEvents",
+            ]
+            for name in flags_to_enable:
+                flag = getattr(openvr, name, None)
+                if flag is None:
+                    continue
+                _safe_call(self.overlay, "SetOverlayFlag", "setOverlayFlag", self.handle, flag, True)
+        except Exception:
+            pass
 
     def _show_dashboard(self) -> None:
         if self.overlay is None:
@@ -454,6 +472,25 @@ class DashboardOverlayClient:
                         log.info("overlay_first_event type=%d", int(e.eventType))
                     self._logged_first_event = True
 
+                if int(e.eventType) == int(getattr(openvr, "VREvent_MouseMove", 300)):
+                    try:
+                        nx = float(e.data.mouse.x)
+                        ny = float(e.data.mouse.y)
+                        px = nx * float(self.w)
+                        py = ny * float(self.h)
+                        self._mouse_px = (px, py)
+                        if not self._logged_first_mouse_move:
+                            log.info("overlay_first_mouse_move mouse_px=(%.1f,%.1f)", px, py)
+                            self._logged_first_mouse_move = True
+                        hover = None
+                        for b in self.buttons:
+                            if b.hit(px, py):
+                                hover = b.id
+                                break
+                        self._hover_button_id = hover
+                    except Exception:
+                        pass
+
                 if int(e.eventType) == int(getattr(openvr, "VREvent_MouseButtonDown", 200)):
                     self._click_toggle = not self._click_toggle
                     self._click_count += 1
@@ -549,10 +586,21 @@ class DashboardOverlayClient:
         for b in self.buttons:
             x, by, bw, bh = b.rect
             p.setPen(QPen(QColor(90, 90, 90), 2))
-            p.setBrush(QColor(30, 30, 30))
+            is_hover = (self._hover_button_id == b.id)
+            p.setBrush(QColor(48, 48, 48) if is_hover else QColor(30, 30, 30))
             p.drawRoundedRect(x, by, bw, bh, 8, 8)
             p.setPen(QColor(230, 230, 230))
             p.drawText(x + 14, by + 36, b.label)
+
+        # Cursor hint for interaction debugging.
+        if self._mouse_px is not None:
+            try:
+                mx, my = self._mouse_px
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(255, 255, 255, 140))
+                p.drawEllipse(int(mx) - 4, int(my) - 4, 8, 8)
+            except Exception:
+                pass
 
         p.end()
         return img

@@ -15,6 +15,7 @@
 - Fixed launcher UI freezes caused by blocking overlay stdout reads.
 - Added `--overlay-test` for submitting a single test frame.
   - `--overlay-test` now exits cleanly when no HMD is detected (no traceback).
+  - Dashboard overlay input is explicitly enabled via OpenVR overlay flags and mouse-scale mapping.
 
 ## 🧭 Playspace + data
 - Playspace resolution uses SteamVR chaperone bounds when available (with clear source logging).
