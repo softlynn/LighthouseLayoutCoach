@@ -13,6 +13,7 @@ import openvr
 
 from .chaperone import PlayArea, get_play_area
 from .coverage import CoverageResult, StationPose, compute_coverage, station_yaw_pitch_deg
+from .playspace import resolve_playspace
 from .metrics import SessionMetrics, analyze_diagnostic_session
 from .recommendations import generate_recommendations
 from .storage import load_config, save_config, save_session
@@ -139,6 +140,7 @@ class StateEngine:
         self._vr_chaperone_setup = None
 
         self._play_area: Optional[PlayArea] = None
+        self._playspace_source_detail: Optional[str] = None
         self._stations: List[StationPose] = []
         self._coverage: Optional[CoverageResult] = None
         self._coverage_key: Optional[tuple] = None
@@ -167,6 +169,7 @@ class StateEngine:
     def get_state(self) -> Dict[str, object]:
         with self._lock:
             pa = self._play_area
+            pa_detail = self._playspace_source_detail
             centroid = pa.centroid if pa else (0.0, 0.0)
             stations = []
             for i, s in enumerate(self._stations[:2]):
@@ -228,7 +231,12 @@ class StateEngine:
 
             pa_json = None
             if pa is not None:
-                pa_json = {"corners_m": [list(p) for p in pa.corners_m], "source": pa.source, "warning": pa.warning}
+                pa_json = {
+                    "corners_m": [list(p) for p in pa.corners_m],
+                    "source": pa.source,
+                    "warning": pa.warning,
+                    "source_detail": pa_detail,
+                }
 
             recs = generate_recommendations(
                 pa or PlayArea([(-1, -1), (1, -1), (1, 1), (-1, 1)], source="default"),
@@ -377,7 +385,9 @@ class StateEngine:
 
         with self._lock:
             self._cfg = load_config()
-            self._play_area = get_play_area(self._vr_chaperone, self._vr_chaperone_setup)
+            ps = resolve_playspace(self._vr_system, self._vr_chaperone, self._vr_chaperone_setup)
+            self._play_area = ps.play_area
+            self._playspace_source_detail = ps.source_detail
             self._stations = self._select_station_poses(devices)
             self._update_tracker_stats(devices)
             self._coverage = self._maybe_recompute_coverage()

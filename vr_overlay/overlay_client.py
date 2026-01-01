@@ -5,6 +5,7 @@ import ctypes
 import json
 import logging
 import math
+import random
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -13,6 +14,10 @@ from typing import Dict, Optional, Tuple
 import openvr
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QImage, QPainter, QPen
+
+from lighthouse_layout_coach.chaperone import PlayArea
+from lighthouse_layout_coach.log_data import LogDataProvider
+from vr_overlay.vr_coach import VRCoachOverlay, VRCoachToggles
 
 
 log = logging.getLogger("llc.overlay")
@@ -44,15 +49,42 @@ class DashboardOverlayClient:
     def __init__(self, state_url: str) -> None:
         self.state_url = state_url.rstrip("/")
         self.w, self.h = 1024, 768
+        self.toggles = VRCoachToggles()
+        self._coach: Optional[VRCoachOverlay] = None
+        self._logs = LogDataProvider()
+        self._history_heatmap: Optional[Dict] = None
+        self._history_heatmap_key: Optional[tuple] = None
+
         self.buttons = [
-            Button("recompute", (28, 680, 300, 60), "Recompute"),
-            Button("diagnostic", (350, 680, 300, 60), "Run 60s Diagnostic"),
+            Button("coach", (28, 680, 240, 60), "Launch VR Coach"),
+            Button("history", (284, 680, 240, 60), "History: OFF"),
+            Button("heatmap", (540, 680, 220, 60), "Heatmap: ON"),
+            Button("body", (776, 680, 220, 60), "Body: ON"),
+            Button("diagnostic", (28, 608, 300, 56), "Run 60s Diagnostic"),
+            Button("recompute", (350, 608, 300, 56), "Recompute"),
         ]
 
         self.overlay = None
         self.handle = None
         self.thumb = None
         self._openvr_inited = False
+
+        # Stability + diagnostics (rate-limited logging; no per-frame spam)
+        self.overlay_created_count = 0
+        self.show_dashboard_count = 0
+        self.submission_attempts = 0
+        self.submission_failures = 0
+        self.recreate_count = 0
+        self.last_error: Optional[str] = None
+
+        self._next_submit_time = 0.0
+        self._last_diag_time = 0.0
+        self._last_error_log_time = 0.0
+        self._last_recreate_time = 0.0
+        self._recreate_cooldown_s = 5.0
+
+        self._cached_state: Dict = {}
+        self._next_state_fetch_time = 0.0
 
     def start(self) -> None:
         openvr.init(openvr.VRApplication_Overlay)
@@ -61,6 +93,7 @@ class DashboardOverlayClient:
         self._create_or_recreate_overlay()
 
         self._configure_overlay()
+        self._show_dashboard()
 
         if self.thumb is not None:
             thumb_img = QImage(256, 256, QImage.Format.Format_RGBA8888)
@@ -76,6 +109,11 @@ class DashboardOverlayClient:
 
     def shutdown(self) -> None:
         try:
+            if self._coach is not None:
+                self._coach.stop()
+        except Exception:
+            pass
+        try:
             if self.overlay and self.handle is not None:
                 _safe_call(self.overlay, "DestroyOverlay", "destroyOverlay", self.handle)
         except Exception:
@@ -90,11 +128,56 @@ class DashboardOverlayClient:
         dt = 1.0 / max(1.0, fps)
         while True:
             start = time.perf_counter()
-            state = self._get_json("/state")
+
+            # Avoid heavy per-frame logic: fetch state at a lower cadence and reuse between frames.
+            now_m = time.monotonic()
+            if now_m >= self._next_state_fetch_time:
+                self._cached_state = self._get_json("/state")
+                self._next_state_fetch_time = now_m + 0.2  # 5 Hz
+            state = self._cached_state
+
+            history_heatmap = self._maybe_update_history_heatmap(state)
+            if self._coach is not None and self._coach.is_running():
+                try:
+                    self._coach.submit_frame(state, history_heatmap=history_heatmap, fps=12.0)
+                except Exception as e:
+                    log.warning("VR Coach submit failed: %s: %s", type(e).__name__, e)
+
             img = self._render(state)
             self._set_raw(self.handle, img)
             self._pump_events()
+            self._log_diagnostics_rate_limited()
             time.sleep(max(0.0, dt - (time.perf_counter() - start)))
+
+    def _maybe_update_history_heatmap(self, state: Dict) -> Optional[Dict]:
+        if not self.toggles.use_history:
+            self._history_heatmap = None
+            self._history_heatmap_key = None
+            return None
+
+        pa = state.get("play_area") or {}
+        corners = pa.get("corners_m")
+        if not (isinstance(corners, list) and len(corners) >= 4):
+            return None
+
+        key = ("history", tuple((float(c[0]), float(c[1])) for c in corners), 0.25)
+        if key == self._history_heatmap_key and self._history_heatmap is not None:
+            return self._history_heatmap
+
+        play_area = PlayArea(
+            corners_m=[(float(c[0]), float(c[1])) for c in corners],
+            source=str(pa.get("source") or "unknown"),
+            warning=str(pa.get("warning") or "") or None,
+        )
+        hm = self._logs.compute_heatmap(play_area, step_m=0.25)
+        if hm is None:
+            self._history_heatmap = None
+            self._history_heatmap_key = key
+            return None
+
+        self._history_heatmap = {"origin_m": list(hm.origin_m), "step_m": hm.step_m, "w": hm.w, "h": hm.h, "score": hm.score}
+        self._history_heatmap_key = key
+        return self._history_heatmap
 
     def _create_or_recreate_overlay(self) -> None:
         if self.overlay is None:
@@ -113,6 +196,7 @@ class DashboardOverlayClient:
             "lighthouse.layout.coach",
             "Lighthouse Layout Coach",
         )
+        self.overlay_created_count += 1
         if isinstance(res, tuple) and len(res) == 3:
             _, self.handle, self.thumb = res
         elif isinstance(res, tuple) and len(res) == 2:
@@ -132,7 +216,43 @@ class DashboardOverlayClient:
             self.handle,
             openvr.VROverlayInputMethod_Mouse,
         )
+
+    def _show_dashboard(self) -> None:
+        if self.overlay is None:
+            return
+        # Never call ShowDashboard from a frame loop. Treat start() as the user's request.
         _safe_call(self.overlay, "ShowDashboard", "showDashboard", "lighthouse.layout.coach")
+        self.show_dashboard_count += 1
+
+    def _log_diagnostics_rate_limited(self) -> None:
+        now = time.monotonic()
+        if now - self._last_diag_time < 1.0:
+            return
+        self._last_diag_time = now
+        log.info(
+            "overlay_diag created=%d show=%d submit_attempts=%d failures=%d recreates=%d last_error=%s",
+            self.overlay_created_count,
+            self.show_dashboard_count,
+            self.submission_attempts,
+            self.submission_failures,
+            self.recreate_count,
+            self.last_error,
+        )
+
+    def _recreate_if_allowed(self, reason: str) -> bool:
+        now = time.monotonic()
+        if now - self._last_recreate_time < self._recreate_cooldown_s:
+            return False
+        self._last_recreate_time = now
+        self.recreate_count += 1
+        log.warning("Recreating dashboard overlay (cooldown %.1fs) due to: %s", self._recreate_cooldown_s, reason)
+        try:
+            self._create_or_recreate_overlay()
+            self._configure_overlay()
+            return True
+        except Exception as e:
+            self.last_error = f"{type(e).__name__}: {e}"
+            return False
 
     def _is_valid_handle(self, handle) -> bool:
         if handle is None:
@@ -177,7 +297,25 @@ class DashboardOverlayClient:
                     y = float(e.data.mouse.y) * self.h
                     for b in self.buttons:
                         if b.hit(x, y):
-                            if b.id == "diagnostic":
+                            if b.id == "coach":
+                                if self._coach is None or not self._coach.is_running():
+                                    try:
+                                        self._coach = VRCoachOverlay(self.overlay, self.state_url, self.toggles)
+                                        self._coach.start()
+                                    except Exception as ex:
+                                        log.error("Failed to start VR Coach: %s: %s", type(ex).__name__, ex)
+                                else:
+                                    try:
+                                        self._coach.stop()
+                                    finally:
+                                        self._coach = None
+                            elif b.id == "history":
+                                self.toggles.use_history = not self.toggles.use_history
+                            elif b.id == "heatmap":
+                                self.toggles.heatmap = not self.toggles.heatmap
+                            elif b.id == "body":
+                                self.toggles.body_suggestions = not self.toggles.body_suggestions
+                            elif b.id == "diagnostic":
                                 self._post("/run_diagnostic")
                             elif b.id == "recompute":
                                 self._post("/recompute")
@@ -194,95 +332,51 @@ class DashboardOverlayClient:
         title.setBold(True)
         p.setFont(title)
         p.setPen(QColor(235, 235, 235))
-        p.drawText(24, 40, "LighthouseLayoutCoach (VR Overlay)")
+        p.drawText(24, 40, "LighthouseLayoutCoach (Dashboard Panel)")
 
-        ok = bool(state.get("connected"))
+        connected = bool(state.get("connected"))
         p.setFont(QFont("Segoe UI", 12))
-        p.setPen(QColor(120, 220, 160) if ok else QColor(255, 170, 120))
-        p.drawText(24, 68, "SteamVR connected" if ok else f"Waiting for SteamVR… {state.get('last_error','')}")
+        p.setPen(QColor(120, 220, 160) if connected else QColor(255, 170, 120))
+        p.drawText(24, 68, "SteamVR connected" if connected else f"Waiting for SteamVR… {state.get('last_error','')}")
 
-        y = 110
+        stations = state.get("stations") or []
+        trackers = state.get("trackers") or []
+        station_n = len(stations)
+        tracker_n = len(trackers)
+        ok_n = sum(1 for t in trackers if t.get("tracking_ok"))
+
+        y = 115
         p.setFont(QFont("Segoe UI", 13, weight=QFont.Weight.DemiBold))
         p.setPen(QColor(220, 220, 220))
-        p.drawText(24, y, "Stations")
-        y += 22
+        p.drawText(24, y, "Summary")
+        y += 24
         p.setFont(QFont("Consolas", 11))
-        for st in state.get("stations", [])[:2]:
-            p.setPen(QColor(200, 200, 200))
-            p.drawText(
-                24,
-                y,
-                f"{st.get('label')}: z {st.get('height_m',0):.2f}m | yaw {st.get('yaw_deg',0):.0f}° | pitch {st.get('pitch_deg',0):.0f}° | aim err {st.get('aim_error_deg',0):+.0f}°",
-            )
-            y += 18
-
-        # Mini-map: play area + stations + trackers + heatmap thumbnails
-        self._draw_minimap(p, state, 620, 90, 380, 310)
-
-        y += 10
-        p.setFont(QFont("Segoe UI", 13, weight=QFont.Weight.DemiBold))
-        p.setPen(QColor(220, 220, 220))
-        p.drawText(24, y, "Coverage (heuristic)")
-        y += 22
-        p.setFont(QFont("Consolas", 11))
-        cov = state.get("coverage")
-        if cov:
-            p.setPen(QColor(200, 200, 200))
-            p.drawText(24, y, f"Foot overlap {cov.get('overlap_pct_foot',0):.1f}% | Waist overlap {cov.get('overlap_pct_waist',0):.1f}% | Score {cov.get('overall_score',0):.1f}/100")
-            y += 18
-            if cov.get("sync_warning"):
-                p.setPen(QColor(255, 210, 122))
-                p.drawText(24, y, "Sync warning: " + str(cov.get("sync_warning"))[:110])
-                y += 18
-        else:
-            p.setPen(QColor(200, 200, 200))
-            p.drawText(24, y, "(coverage unavailable)")
-            y += 18
-
-        heat = state.get("heatmap")
-        if heat:
-            p.setPen(QColor(220, 220, 220))
-            p.setFont(QFont("Segoe UI", 11, weight=QFont.Weight.DemiBold))
-            p.drawText(24, y + 18, "Heatmap: Foot / Waist")
-            self._draw_heatmap(p, heat, "foot", 24, y + 28, 280, 120)
-            self._draw_heatmap(p, heat, "waist", 320, y + 28, 280, 120)
-            y += 160
-
-        y += 10
-        p.setFont(QFont("Segoe UI", 13, weight=QFont.Weight.DemiBold))
-        p.setPen(QColor(220, 220, 220))
-        p.drawText(24, y, "Trackers (live)")
-        y += 22
-        p.setFont(QFont("Consolas", 11))
-        for tr in state.get("trackers", []):
-            tracking_ok = bool(tr.get("tracking_ok"))
-            p.setPen(QColor(120, 220, 160) if tracking_ok else QColor(255, 170, 120))
-            p.drawText(
-                24,
-                y,
-                f"{tr.get('role')}: {'OK' if tracking_ok else 'NOT OK'} | dropouts {tr.get('dropouts',0)} | jitter {tr.get('jitter_pos_mm',0):.1f}mm / {tr.get('jitter_yaw_deg',0):.1f}°",
-            )
-            y += 18
-
-        y += 10
-        p.setFont(QFont("Segoe UI", 13, weight=QFont.Weight.DemiBold))
-        p.setPen(QColor(220, 220, 220))
-        p.drawText(24, y, "Recommendations")
-        y += 22
-        p.setFont(QFont("Segoe UI", 11))
-        for line in state.get("recommendations", [])[:10]:
-            p.setPen(QColor(200, 200, 200))
-            p.drawText(24, y, str(line)[:120])
-            y += 16
-
+        p.setPen(QColor(200, 200, 200))
+        p.drawText(24, y, f"Base stations: {station_n} | Trackers: {tracker_n} (OK: {ok_n})")
+        y += 18
         diag = state.get("diagnostic") or {}
-        p.setFont(QFont("Segoe UI", 11))
-        if diag.get("running"):
-            p.setPen(QColor(255, 210, 122))
-            p.drawText(24, 660, f"Diagnostic: {diag.get('stage','Running')} ({diag.get('t_s',0):.0f}s)")
-        else:
-            p.setPen(QColor(200, 200, 200))
-            p.drawText(24, 660, f"Diagnostic: {diag.get('stage','Idle')}")
+        p.drawText(24, y, f"Diagnostic: {diag.get('stage','Idle')} {'(running)' if diag.get('running') else ''}")
+        y += 18
+        p.drawText(24, y, f"VR Coach: {'Running' if (self._coach is not None and self._coach.is_running()) else 'Stopped'}")
+        y += 18
+        hist = self._logs.summary()
+        p.drawText(
+            24,
+            y,
+            f"Historical logs: {'ON' if self.toggles.use_history else 'OFF'} | sessions {hist.sessions} | points {hist.points}",
+        )
+
+        # Update button labels based on current toggles/state.
+        for i, b in enumerate(self.buttons):
+            if b.id == "coach":
+                label = "Exit VR Coach" if (self._coach is not None and self._coach.is_running()) else "Launch VR Coach"
+                self.buttons[i] = Button(b.id, b.rect, label)
+            elif b.id == "history":
+                self.buttons[i] = Button(b.id, b.rect, f"History: {'ON' if self.toggles.use_history else 'OFF'}")
+            elif b.id == "heatmap":
+                self.buttons[i] = Button(b.id, b.rect, f"Heatmap: {'ON' if self.toggles.heatmap else 'OFF'}")
+            elif b.id == "body":
+                self.buttons[i] = Button(b.id, b.rect, f"Body: {'ON' if self.toggles.body_suggestions else 'OFF'}")
 
         p.setFont(QFont("Segoe UI", 10, weight=QFont.Weight.DemiBold))
         for b in self.buttons:
@@ -431,50 +525,63 @@ class DashboardOverlayClient:
             log.error("SetOverlayRaw skipped: overlay interface is None")
             return
         if not self._is_valid_handle(handle):
-            log.warning("SetOverlayRaw: invalid overlay handle (%r); recreating overlay…", handle)
-            try:
-                self._create_or_recreate_overlay()
-                self._configure_overlay()
+            # Do not spam recreates; rate-limit with cooldown.
+            if self._recreate_if_allowed(f"invalid overlay handle {handle!r}"):
                 handle = self.handle
-            except Exception as e:
-                log.error("SetOverlayRaw skipped: failed to recreate overlay: %s: %s", type(e).__name__, e)
-                return
             if not self._is_valid_handle(handle):
-                log.error("SetOverlayRaw skipped: invalid overlay handle after recreate (%r)", handle)
                 return
+
+        now = time.monotonic()
+        if now < self._next_submit_time:
+            return
 
         log.debug("SetOverlayRaw: handle=%s w=%d h=%d depth=%d len=%d", handle, w, h, depth, len(data))
         buf = ctypes.create_string_buffer(data, len(data))
 
         last_exc: Optional[Exception] = None
+        self.submission_attempts += 1
         for attempt in range(1, 4):
             try:
                 _safe_call(self.overlay, "SetOverlayRaw", "setOverlayRaw", handle, buf, w, h, depth)
+                self.last_error = None
                 return
             except openvr.error_code.OverlayError_RequestFailed as e:
                 last_exc = e
+                self.submission_failures += 1
+                self.last_error = f"{type(e).__name__}: {e}"
                 log.warning("SetOverlayRaw RequestFailed (attempt %d/3); retrying…", attempt)
                 time.sleep(0.05 * attempt)
             except Exception as e:
                 last_exc = e
+                self.submission_failures += 1
+                self.last_error = f"{type(e).__name__}: {e}"
                 log.error("SetOverlayRaw failed: %s: %s", type(e).__name__, e)
                 return
 
-        log.warning(
-            "SetOverlayRaw still failing after retries (w=%d h=%d depth=%d len=%d); recreating overlay handle and retrying once…",
-            w,
-            h,
-            depth,
-            len(data),
-        )
-        try:
-            self._create_or_recreate_overlay()
-            if self._is_valid_handle(self.handle):
-                self._configure_overlay()
-                _safe_call(self.overlay, "SetOverlayRaw", "setOverlayRaw", self.handle, buf, w, h, depth)
-                return
-        except Exception as e:
-            last_exc = e
+        # Back off 2–5 seconds on RequestFailed; do not recreate spam or cause flicker.
+        backoff_s = float(random.choice([2.0, 3.0, 5.0]))
+        self._next_submit_time = time.monotonic() + backoff_s
+        now = time.monotonic()
+        if now - self._last_error_log_time >= 2.0:
+            self._last_error_log_time = now
+            log.warning(
+                "SetOverlayRaw paused for %.1fs after RequestFailed (w=%d h=%d depth=%d len=%d).",
+                backoff_s,
+                w,
+                h,
+                depth,
+                len(data),
+            )
+
+        # If failures persist, allow a recreate only on cooldown (hard failure path).
+        if self._recreate_if_allowed(f"OverlayError_RequestFailed after retries ({w=} {h=} {depth=} len={len(data)})"):
+            try:
+                if self.overlay is not None and self._is_valid_handle(self.handle):
+                    _safe_call(self.overlay, "SetOverlayRaw", "setOverlayRaw", self.handle, buf, w, h, depth)
+                    self.last_error = None
+                    return
+            except Exception as e:
+                last_exc = e
 
         log.error(
             "SetOverlayRaw disabled (continuing without crashing) (w=%d h=%d depth=%d len=%d): %s: %s",
@@ -490,7 +597,7 @@ class DashboardOverlayClient:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:17835", help="State server base URL")
-    ap.add_argument("--fps", type=float, default=20.0)
+    ap.add_argument("--fps", type=float, default=10.0)
     ap.add_argument("--overlay-test", action="store_true", help="Initialize OpenVR and submit one 256x256 test image")
     args = ap.parse_args(argv)
 

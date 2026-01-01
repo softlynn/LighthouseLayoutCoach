@@ -13,7 +13,8 @@ This app uses **SteamVR/OpenVR as the source of truth** (no Meta/Quest APIs).
 - Live SteamVR device status (stations + trackers)
 - Guided setup (pick 2 base stations + label 3 trackers by serial)
 - Play-area layout view + heuristic coverage visualization
-- VR Overlay Mode: SteamVR dashboard panel fed by a local state server
+- VR Overlay Mode: stable SteamVR dashboard panel + optional VR Coach world overlay
+- Optional historical-log-backed tracking heatmap (read-only prior session data)
 
 ## 📦 Download
 
@@ -59,6 +60,10 @@ Commands:
 - VR overlay: `python -m lighthouse_layout_coach --vr` (alias: `--overlay`)
 - Overlay smoke submit: `python -m lighthouse_layout_coach --overlay-test`
 
+Modes:
+- **Dashboard Panel**: SteamVR dashboard tab (controls + quick status)
+- **VR Coach**: separate world overlay (playspace view with stations/trackers + optional layers)
+
 Requirements:
 - SteamVR running before starting VR Overlay Mode
 - Allow localhost traffic if prompted (binds to `127.0.0.1` only)
@@ -66,3 +71,17 @@ Requirements:
 Troubleshooting:
 - If the overlay panel doesn’t appear in the SteamVR dashboard, restart SteamVR and try again.
 
+## 📁 Logs (Historical Data)
+
+Prior runs are stored in:
+- `%APPDATA%\LighthouseLayoutCoach\sessions\*.json`
+
+These files are treated as read-only data sources for the optional historical heatmap.
+
+## 🧭 Playspace Resolution
+
+Playspace bounds are resolved in SteamVR standing-universe coordinates using:
+1) SteamVR Chaperone (`IVRChaperone.GetPlayAreaRect()` / collision bounds) when available
+2) Default 2m×2m fallback when unavailable
+
+Quest → SteamVR alignment (Virtual Desktop / Space Calibrator) is assumed to already be reflected in SteamVR’s standing origin; the app logs which playspace source was used.
