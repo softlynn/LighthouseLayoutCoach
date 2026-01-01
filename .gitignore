@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual envs
+.venv/
+.venv_*/
+venv/
+
+# Builds / packaging outputs
+build/
+dist/
+*.spec.user
+
+# Local runtime outputs (should live in AppData, but ignore if created)
+sessions/
+export/
+config.json
+
+# IDE
+.vscode/
+.idea/
+

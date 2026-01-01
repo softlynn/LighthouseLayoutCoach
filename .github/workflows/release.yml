@@ -1,0 +1,55 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build (PyInstaller + Inno Setup)
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+
+      - name: Validate VERSION matches tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $ver = (Get-Content VERSION -TotalCount 1).Trim()
+          if ($tag -ne "v$ver") { throw "Tag ($tag) does not match VERSION (v$ver)" }
+
+      - name: Verify release assets
+        shell: pwsh
+        run: |
+          if (!(Test-Path dist/release_assets/LighthouseLayoutCoach.exe)) { throw "Missing LighthouseLayoutCoach.exe" }
+          if (!(Test-Path dist/release_assets/LighthouseLayoutCoach_Setup.exe)) { throw "Missing LighthouseLayoutCoach_Setup.exe" }
+
+      - name: Create or update GitHub Release and upload assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $exists = $true
+          gh release view $tag | Out-Null
+          if ($LASTEXITCODE -ne 0) { $exists = $false }
+          if (-not $exists) {
+            gh release create $tag --title $tag --notes "Automated build for $tag. (Unsigned binaries may trigger Windows SmartScreen.)"
+          }
+          gh release upload $tag dist/release_assets/LighthouseLayoutCoach.exe dist/release_assets/LighthouseLayoutCoach_Setup.exe --clobber
