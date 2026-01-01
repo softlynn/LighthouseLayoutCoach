@@ -29,6 +29,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 
 [Files]
 Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; Optional dependency installer (bundled by scripts/build_windows.ps1 when available)
+Source: "..\packaging\redist\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall; Check: VcRedistIsBundled
 
 [Icons]
 Name: "{group}\Lighthouse Layout Coach (Launcher)"; Filename: "{app}\{#MyAppExeName}"
@@ -41,3 +43,36 @@ Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "A
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Lighthouse Layout Coach"; Flags: nowait postinstall skipifsilent
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Runtime…"; Flags: waituntilterminated runhidden; Check: VcRedistNeedsInstall
+
+[Code]
+function VcRegKey: string;
+begin
+  Result := 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64';
+end;
+
+function VcRedistInstalled: Boolean;
+var
+  installed: Cardinal;
+begin
+  Result := False;
+  installed := 0;
+  if RegQueryDWordValue(HKLM, VcRegKey, 'Installed', installed) then begin
+    Result := (installed = 1);
+    exit;
+  end;
+  if RegQueryDWordValue(HKLM32, VcRegKey, 'Installed', installed) then begin
+    Result := (installed = 1);
+    exit;
+  end;
+end;
+
+function VcRedistIsBundled: Boolean;
+begin
+  Result := FileExists(ExpandConstant('{tmp}\vc_redist.x64.exe'));
+end;
+
+function VcRedistNeedsInstall: Boolean;
+begin
+  Result := (not VcRedistInstalled()) and VcRedistIsBundled();
+end;

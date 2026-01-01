@@ -12,6 +12,7 @@ venv/
 build/
 dist/
 *.spec.user
+packaging/redist/*.exe
 
 # Local runtime outputs (should live in AppData, but ignore if created)
 sessions/
@@ -21,4 +22,3 @@ config.json
 # IDE
 .vscode/
 .idea/
-

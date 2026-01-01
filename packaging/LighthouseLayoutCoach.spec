@@ -47,6 +47,8 @@ exe = EXE(
     [],
     name="LighthouseLayoutCoach",
     icon=os.path.join(basedir, "assets", "icons", "app_icon.ico"),
+    # Avoid Temp/_MEI cleanup issues and AV contention by extracting to a stable user-writable location.
+    runtime_tmpdir=os.path.join(os.environ.get("LOCALAPPDATA", basedir), "LighthouseLayoutCoach", "tmp"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

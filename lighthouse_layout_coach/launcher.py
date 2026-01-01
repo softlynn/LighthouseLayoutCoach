@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import queue
 import subprocess
 import sys
 import threading
@@ -25,6 +26,9 @@ class VRProcesses:
     http_server: object
     overlay_proc: subprocess.Popen
     url: str
+    overlay_log_stop: threading.Event
+    overlay_log_queue: "queue.Queue[str]"
+    overlay_log_thread: threading.Thread
 
 
 def create_launcher_window(auto_start_vr: bool = False):
@@ -120,7 +124,36 @@ def create_launcher_window(auto_start_vr: bool = False):
 
             overlay_cmd = self._overlay_command(url)
             overlay_proc = subprocess.Popen(overlay_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            self._vr = VRProcesses(engine=engine, http_server=http_server, overlay_proc=overlay_proc, url=url)
+
+            overlay_log_stop = threading.Event()
+            overlay_log_queue: queue.Queue[str] = queue.Queue()
+
+            def _log_reader() -> None:
+                try:
+                    if overlay_proc.stdout is None:
+                        return
+                    for line in iter(overlay_proc.stdout.readline, ""):
+                        if overlay_log_stop.is_set():
+                            break
+                        if line:
+                            overlay_log_queue.put(line.rstrip("\n"))
+                        if overlay_proc.poll() is not None:
+                            break
+                except Exception:
+                    return
+
+            t = threading.Thread(target=_log_reader, name="OverlayLogReader", daemon=True)
+            t.start()
+
+            self._vr = VRProcesses(
+                engine=engine,
+                http_server=http_server,
+                overlay_proc=overlay_proc,
+                url=url,
+                overlay_log_stop=overlay_log_stop,
+                overlay_log_queue=overlay_log_queue,
+                overlay_log_thread=t,
+            )
             self._append_log("Overlay process started.")
 
         def _overlay_command(self, url: str):
@@ -150,6 +183,7 @@ def create_launcher_window(auto_start_vr: bool = False):
                 pass
 
             try:
+                self._vr.overlay_log_stop.set()
                 self._vr.overlay_proc.terminate()
                 self._vr.overlay_proc.wait(timeout=1.5)
             except Exception:
@@ -157,6 +191,11 @@ def create_launcher_window(auto_start_vr: bool = False):
                     self._vr.overlay_proc.kill()
                 except Exception:
                     pass
+
+            try:
+                self._vr.overlay_log_thread.join(timeout=1.0)
+            except Exception:
+                pass
 
             self._vr = None
             self.btn_stop.setEnabled(False)
@@ -169,15 +208,15 @@ def create_launcher_window(auto_start_vr: bool = False):
             if self._vr is None:
                 return
             proc = self._vr.overlay_proc
-            if proc.stdout is not None:
-                try:
-                    while True:
-                        line = proc.stdout.readline()
-                        if not line:
-                            break
-                        self._append_log("overlay: " + line.rstrip())
-                except Exception:
-                    pass
+            try:
+                # Drain a bounded number of log lines per tick to keep UI responsive.
+                for _ in range(200):
+                    line = self._vr.overlay_log_queue.get_nowait()
+                    self._append_log("overlay: " + line.rstrip())
+            except queue.Empty:
+                pass
+            except Exception:
+                pass
 
             if proc.poll() is not None:
                 self._append_log(f"Overlay process exited with code {proc.returncode}.")

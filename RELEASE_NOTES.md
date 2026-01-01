@@ -11,6 +11,7 @@
 - Stabilized the SteamVR dashboard overlay lifecycle (no per-frame `ShowDashboard`, recreate cooldown + backoff).
 - Hardened `SetOverlayRaw` submission with validation, retries/backoff, and clearer logs.
 - Fixed `PollNextOverlayEvent` wrapper-compatibility and improved handling of `OverlayError_InvalidHandle` to reduce flicker.
+- Fixed launcher UI freezes caused by blocking overlay stdout reads.
 - Added `--overlay-test` for submitting a single test frame.
 
 ## 🧭 Playspace + data
@@ -23,3 +24,7 @@
 
 ## 📘 Documentation
 - README updated with a prominent latest-release link, dual-mode notes, and log/playspace documentation.
+
+## Installer/runtime
+- Bundles VC++ Redistributable (x64) and installs it automatically if missing.
+- Uses a stable runtime extraction directory under `%LOCALAPPDATA%\\LighthouseLayoutCoach\\tmp` to reduce Temp cleanup issues.

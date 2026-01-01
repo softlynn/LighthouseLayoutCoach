@@ -26,6 +26,20 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 pip install pyinstaller
 
+# Optional: bundle VC++ runtime installer to reduce "Failed to load Python DLL" issues on fresh machines.
+$redistDir = Join-Path $repo "packaging\\redist"
+$vcRedist = Join-Path $redistDir "vc_redist.x64.exe"
+New-Item -ItemType Directory -Force -Path $redistDir | Out-Null
+if (!(Test-Path $vcRedist)) {
+  try {
+    $url = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    Write-Host "Downloading VC++ Redistributable (x64): $url"
+    Invoke-WebRequest -Uri $url -OutFile $vcRedist -UseBasicParsing
+  } catch {
+    Write-Host "WARNING: Failed to download VC++ Redistributable; installer will not be able to auto-install it."
+  }
+}
+
 if (!(Test-Path "packaging\\LighthouseLayoutCoach.spec")) {
   throw "Missing packaging\\LighthouseLayoutCoach.spec"
 }
