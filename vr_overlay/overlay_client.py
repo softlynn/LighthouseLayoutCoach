@@ -17,6 +17,7 @@ from PySide6.QtGui import QColor, QFont, QGuiApplication, QImage, QPainter, QPen
 
 from lighthouse_layout_coach.chaperone import PlayArea
 from lighthouse_layout_coach.log_data import LogDataProvider
+from lighthouse_layout_coach.logging_setup import setup_logging
 from vr_overlay.vr_coach import VRCoachOverlay, VRCoachToggles
 
 
@@ -86,11 +87,32 @@ class DashboardOverlayClient:
         self._cached_state: Dict = {}
         self._next_state_fetch_time = 0.0
 
+        self._dashboard_key = "lighthouse.layout.coach"
+        self._dashboard_name = "Lighthouse Layout Coach"
+
     def start(self) -> None:
-        openvr.init(openvr.VRApplication_Overlay)
+        # SteamVR can take a moment to be ready; retry init briefly instead of crashing.
+        init_last: Optional[Exception] = None
+        for attempt in range(1, 11):
+            try:
+                openvr.init(openvr.VRApplication_Overlay)
+                init_last = None
+                break
+            except Exception as e:
+                init_last = e
+                # Backoff and retry for common SteamVR-not-ready states.
+                time.sleep(0.35)
+        if init_last is not None:
+            raise init_last
+
         self._openvr_inited = True
         self.overlay = openvr.VROverlay()
-        self._create_or_recreate_overlay()
+        try:
+            self._create_or_recreate_overlay()
+        except openvr.error_code.OverlayError_KeyInUse as e:
+            # Do not crash: leave dashboard handle unset and let the run loop retry on cooldown.
+            self.last_error = f"{type(e).__name__}: {e}"
+            log.warning("Dashboard overlay key is in use; will retry creation on cooldown. (%s)", self.last_error)
 
         self._configure_overlay()
         self._show_dashboard()
@@ -189,13 +211,55 @@ class DashboardOverlayClient:
             except Exception:
                 pass
 
-        res = _safe_call(
-            self.overlay,
-            "CreateDashboardOverlay",
-            "createDashboardOverlay",
-            "lighthouse.layout.coach",
-            "Lighthouse Layout Coach",
-        )
+        try:
+            res = _safe_call(
+                self.overlay,
+                "CreateDashboardOverlay",
+                "createDashboardOverlay",
+                self._dashboard_key,
+                self._dashboard_name,
+            )
+        except openvr.error_code.OverlayError_KeyInUse as e:
+            # Most often indicates a stale overlay from a previous crash/run.
+            self.last_error = f"{type(e).__name__}: {e}"
+            log.warning("CreateDashboardOverlay failed: key in use; attempting cleanup/reuse. (%s)", self.last_error)
+
+            # 1) Try to locate and destroy existing overlays with the same key.
+            existing = self._find_overlay_handle(self._dashboard_key)
+            if existing is not None:
+                self._destroy_overlay_best_effort(existing)
+
+            # 2) Dashboard thumbnail key is runtime-specific; try common variants.
+            thumb_candidates = [
+                self._dashboard_key + ".thumb",
+                self._dashboard_key + "_thumb",
+                self._dashboard_key + ".thumbnail",
+                self._dashboard_key + "_thumbnail",
+            ]
+            for k in thumb_candidates:
+                h = self._find_overlay_handle(k)
+                if h is not None:
+                    self._destroy_overlay_best_effort(h)
+
+            time.sleep(0.2)
+            # 3) Retry creation once after cleanup.
+            try:
+                res = _safe_call(
+                    self.overlay,
+                    "CreateDashboardOverlay",
+                    "createDashboardOverlay",
+                    self._dashboard_key,
+                    self._dashboard_name,
+                )
+            except openvr.error_code.OverlayError_KeyInUse:
+                # 4) Last resort: reuse the existing overlay handle (if present).
+                self.handle = existing
+                self.thumb = None
+                if self._is_valid_handle(self.handle):
+                    log.info("Reusing existing dashboard overlay handle due to key-in-use.")
+                    return
+                raise
+
         self.overlay_created_count += 1
         if isinstance(res, tuple) and len(res) == 3:
             _, self.handle, self.thumb = res
@@ -204,6 +268,29 @@ class DashboardOverlayClient:
         else:
             self.handle = res
             self.thumb = None
+
+    def _find_overlay_handle(self, key: str):
+        if self.overlay is None:
+            return None
+        try:
+            res = _safe_call(self.overlay, "FindOverlay", "findOverlay", key)
+        except Exception:
+            return None
+
+        handle = None
+        if isinstance(res, tuple) and res:
+            handle = res[0]
+        else:
+            handle = res
+        return handle if self._is_valid_handle(handle) else None
+
+    def _destroy_overlay_best_effort(self, handle) -> None:
+        if self.overlay is None:
+            return
+        try:
+            _safe_call(self.overlay, "DestroyOverlay", "destroyOverlay", handle)
+        except Exception:
+            return
 
     def _configure_overlay(self) -> None:
         if self.overlay is None or self.handle is None:
@@ -601,7 +688,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--overlay-test", action="store_true", help="Initialize OpenVR and submit one 256x256 test image")
     args = ap.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+    log_path = setup_logging(level=logging.INFO, filename="LighthouseLayoutCoach_overlay.log")
+    log.info("Overlay logging to %s", log_path)
 
     app = QGuiApplication([])
     client = DashboardOverlayClient(args.url)

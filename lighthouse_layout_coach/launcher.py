@@ -12,6 +12,8 @@ from typing import Optional
 
 log = logging.getLogger("lighthouse_layout_coach.launcher")
 
+from .logging_setup import setup_logging
+
 
 def _is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
@@ -197,7 +199,8 @@ def cli_main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--url", default="http://127.0.0.1:17835", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    log_path = setup_logging(level=logging.INFO)
+    log.info("Logging to %s", log_path)
 
     if args.smoke:
         try:
