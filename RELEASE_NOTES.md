@@ -10,10 +10,11 @@
 ## 🛠️ VR overlay stability
 - Stabilized the SteamVR dashboard overlay lifecycle (no per-frame `ShowDashboard`, recreate cooldown + backoff).
 - Hardened `SetOverlayRaw` submission with validation, retries/backoff, and clearer logs.
-- Fixed `PollNextOverlayEvent` wrapper-compatibility so clicks work across OpenVR Python wrapper variants (and reduced event/log spam).
+- Fixed `PollNextOverlayEvent` signature mismatch so overlay input events are handled (clicks now register).
 - Reduced flicker by avoiding dashboard overlay recreate unless there’s a sustained submission outage.
 - Fixed launcher UI freezes caused by blocking overlay stdout reads.
 - Added `--overlay-test` for submitting a single test frame.
+  - `--overlay-test` now exits cleanly when no HMD is detected (no traceback).
 
 ## 🧭 Playspace + data
 - Playspace resolution uses SteamVR chaperone bounds when available (with clear source logging).
@@ -32,3 +33,6 @@
 
 ## Updates
 - Launcher now includes a `Check for Updates…` button (same update check used in the desktop app).
+
+## Temp cleanup mitigation
+- Added an optional onedir `LighthouseLayoutCoachOverlay.exe` helper to avoid PyInstaller onefile `_MEI*` temp cleanup warnings when starting/stopping VR mode.
