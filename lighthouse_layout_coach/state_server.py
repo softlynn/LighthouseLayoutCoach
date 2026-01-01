@@ -141,6 +141,7 @@ class StateEngine:
 
         self._play_area: Optional[PlayArea] = None
         self._playspace_source_detail: Optional[str] = None
+        self._next_playspace_resolve_time = 0.0
         self._stations: List[StationPose] = []
         self._coverage: Optional[CoverageResult] = None
         self._coverage_key: Optional[tuple] = None
@@ -385,9 +386,12 @@ class StateEngine:
 
         with self._lock:
             self._cfg = load_config()
-            ps = resolve_playspace(self._vr_system, self._vr_chaperone, self._vr_chaperone_setup)
-            self._play_area = ps.play_area
-            self._playspace_source_detail = ps.source_detail
+            now = time.monotonic()
+            if self._play_area is None or now >= self._next_playspace_resolve_time:
+                ps = resolve_playspace(self._vr_system, self._vr_chaperone, self._vr_chaperone_setup)
+                self._play_area = ps.play_area
+                self._playspace_source_detail = ps.source_detail
+                self._next_playspace_resolve_time = now + 5.0
             self._stations = self._select_station_poses(devices)
             self._update_tracker_stats(devices)
             self._coverage = self._maybe_recompute_coverage()

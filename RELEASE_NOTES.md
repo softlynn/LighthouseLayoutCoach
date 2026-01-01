@@ -10,6 +10,7 @@
 ## 🛠️ VR overlay stability
 - Stabilized the SteamVR dashboard overlay lifecycle (no per-frame `ShowDashboard`, recreate cooldown + backoff).
 - Hardened `SetOverlayRaw` submission with validation, retries/backoff, and clearer logs.
+- Fixed `PollNextOverlayEvent` wrapper-compatibility and improved handling of `OverlayError_InvalidHandle` to reduce flicker.
 - Added `--overlay-test` for submitting a single test frame.
 
 ## 🧭 Playspace + data

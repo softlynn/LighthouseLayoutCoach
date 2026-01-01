@@ -90,6 +90,8 @@ class DashboardOverlayClient:
         self._dashboard_key = "lighthouse.layout.coach"
         self._dashboard_name = "Lighthouse Layout Coach"
 
+        self._poll_event_needs_size: Optional[bool] = None
+
     def start(self) -> None:
         # SteamVR can take a moment to be ready; retry init briefly instead of crashing.
         init_last: Optional[Exception] = None
@@ -378,7 +380,22 @@ class DashboardOverlayClient:
         # Best-effort click support.
         try:
             e = openvr.VREvent_t()
-            while _safe_call(self.overlay, "PollNextOverlayEvent", "pollNextOverlayEvent", self.handle, e, ctypes.sizeof(e)):
+            while True:
+                try:
+                    if self._poll_event_needs_size is False:
+                        ok = _safe_call(self.overlay, "PollNextOverlayEvent", "pollNextOverlayEvent", self.handle, e)
+                    else:
+                        ok = _safe_call(
+                            self.overlay, "PollNextOverlayEvent", "pollNextOverlayEvent", self.handle, e, ctypes.sizeof(e)
+                        )
+                        self._poll_event_needs_size = True
+                except TypeError:
+                    # Some openvr python wrappers don't accept the size argument.
+                    self._poll_event_needs_size = False
+                    ok = _safe_call(self.overlay, "PollNextOverlayEvent", "pollNextOverlayEvent", self.handle, e)
+
+                if not ok:
+                    break
                 if int(e.eventType) == int(getattr(openvr, "VREvent_MouseButtonDown", 200)):
                     x = float(e.data.mouse.x) * self.w
                     y = float(e.data.mouse.y) * self.h
@@ -638,6 +655,15 @@ class DashboardOverlayClient:
                 self.last_error = f"{type(e).__name__}: {e}"
                 log.warning("SetOverlayRaw RequestFailed (attempt %d/3); retrying…", attempt)
                 time.sleep(0.05 * attempt)
+            except openvr.error_code.OverlayError_InvalidHandle as e:
+                last_exc = e
+                self.submission_failures += 1
+                self.last_error = f"{type(e).__name__}: {e}"
+                # Treat as a hard lifecycle failure (SteamVR restarted / overlay torn down).
+                self._next_submit_time = time.monotonic() + 2.0
+                if self._recreate_if_allowed("OverlayError_InvalidHandle during SetOverlayRaw"):
+                    handle = self.handle
+                return
             except Exception as e:
                 last_exc = e
                 self.submission_failures += 1
