@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import queue
 import subprocess
 import sys
@@ -122,6 +123,7 @@ def create_launcher_window(auto_start_vr: bool = False):
             if self._vr is not None:
                 return
             self._append_log("Starting VR mode: state server + overlay client…")
+            log.info("VR mode start requested")
             self.status.setText("VR mode: starting…")
             self.btn_stop.setEnabled(True)
             self.btn_vr.setEnabled(False)
@@ -135,7 +137,18 @@ def create_launcher_window(auto_start_vr: bool = False):
             http_server = serve_state(engine, host="127.0.0.1", port=17835)
 
             overlay_cmd = self._overlay_command(url)
-            overlay_proc = subprocess.Popen(overlay_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            env = os.environ.copy()
+            env.setdefault(
+                "PYINSTALLER_RUNTIME_TMPDIR",
+                os.path.join(os.environ.get("LOCALAPPDATA", os.environ.get("TEMP", ".")), "LighthouseLayoutCoach", "tmp"),
+            )
+            overlay_proc = subprocess.Popen(
+                overlay_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+            )
 
             overlay_log_stop = threading.Event()
             overlay_log_queue: queue.Queue[str] = queue.Queue()
@@ -167,9 +180,19 @@ def create_launcher_window(auto_start_vr: bool = False):
                 overlay_log_thread=t,
             )
             self._append_log("Overlay process started.")
+            log.info("VR mode started: overlay_pid=%s", overlay_proc.pid)
 
         def _overlay_command(self, url: str):
             if _is_frozen():
+                # Prefer a bundled onedir overlay helper to avoid onefile _MEI extraction/cleanup warnings.
+                try:
+                    from pathlib import Path
+
+                    overlay_exe = (Path(sys.executable).resolve().parent / "overlay" / "LighthouseLayoutCoachOverlay.exe")
+                    if overlay_exe.exists():
+                        return [str(overlay_exe), "--url", url]
+                except Exception:
+                    pass
                 return [sys.executable, "--overlay-client", "--url", url]
             return [sys.executable, "-m", "lighthouse_layout_coach", "--overlay-client", "--url", url]
 
@@ -177,6 +200,7 @@ def create_launcher_window(auto_start_vr: bool = False):
             if self._vr is None:
                 return
             self._append_log("Stopping VR mode…")
+            log.info("VR mode stop requested")
 
             try:
                 req = urllib.request.Request(self._vr.url + "/shutdown", method="POST", data=b"{}")
@@ -197,7 +221,7 @@ def create_launcher_window(auto_start_vr: bool = False):
             try:
                 self._vr.overlay_log_stop.set()
                 self._vr.overlay_proc.terminate()
-                self._vr.overlay_proc.wait(timeout=1.5)
+                self._vr.overlay_proc.wait(timeout=1.0)
             except Exception:
                 try:
                     self._vr.overlay_proc.kill()
@@ -215,6 +239,7 @@ def create_launcher_window(auto_start_vr: bool = False):
             self.btn_desktop.setEnabled(True)
             self.status.setText("VR mode: stopped.")
             self._append_log("VR mode stopped.")
+            log.info("VR mode stopped")
 
         def _tick(self) -> None:
             if self._vr is None:
@@ -231,8 +256,10 @@ def create_launcher_window(auto_start_vr: bool = False):
                 pass
 
             if proc.poll() is not None:
-                self._append_log(f"Overlay process exited with code {proc.returncode}.")
-                self.btn_stop.setEnabled(False)
+                code = proc.returncode
+                self._append_log(f"Overlay process exited with code {code}.")
+                log.warning("Overlay process exited: code=%s", code)
+                self._stop_vr()
 
     return LauncherWindow(auto_start_vr=auto_start_vr)
 
@@ -246,11 +273,16 @@ def cli_main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--overlay", action="store_true", help="Alias for --vr")
     ap.add_argument("--smoke", action="store_true", help="Non-UI smoke test (verifies OpenVR DLL loads)")
     ap.add_argument("--overlay-test", action="store_true", help="Submit one overlay frame (OpenVR init + 256x256 image)")
+    ap.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
     ap.add_argument("--overlay-client", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--url", default="http://127.0.0.1:17835", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
-    log_path = setup_logging(level=logging.INFO)
+    if args.debug:
+        os.environ["LLC_DEBUG"] = "1"
+
+    log_level = logging.DEBUG if (args.debug or os.environ.get("LLC_DEBUG") == "1") else logging.INFO
+    log_path = setup_logging(level=log_level)
     log.info("Logging to %s", log_path)
 
     if args.smoke:
@@ -265,12 +297,18 @@ def cli_main(argv: Optional[list[str]] = None) -> int:
     if args.overlay_client:
         from vr_overlay.overlay_client import main as overlay_main
 
-        return overlay_main(["--url", args.url])
+        ov_args = ["--url", args.url]
+        if args.debug or os.environ.get("LLC_DEBUG") == "1":
+            ov_args.append("--debug")
+        return overlay_main(ov_args)
 
     if args.overlay_test:
         from vr_overlay.overlay_client import main as overlay_main
 
-        return overlay_main(["--overlay-test", "--url", args.url])
+        ov_args = ["--overlay-test", "--url", args.url]
+        if args.debug or os.environ.get("LLC_DEBUG") == "1":
+            ov_args.append("--debug")
+        return overlay_main(ov_args)
 
     from PySide6.QtWidgets import QApplication
     from PySide6.QtGui import QIcon

@@ -22,3 +22,9 @@ config.json
 # IDE
 .vscode/
 .idea/
+*.code-workspace
+*.suo
+*.user
+*.log
+.DS_Store
+Thumbs.db

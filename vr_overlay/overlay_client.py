@@ -5,6 +5,7 @@ import ctypes
 import json
 import logging
 import math
+import os
 import random
 import time
 import urllib.request
@@ -92,6 +93,12 @@ class DashboardOverlayClient:
         self._dashboard_name = "Lighthouse Layout Coach"
 
         self._poll_event_needs_size: Optional[bool] = None
+        self._event_poll_broken = False
+        self._events_polled_since = 0
+        self._events_last_rate_time = time.monotonic()
+        self._logged_first_event = False
+        self._click_toggle = False
+        self._click_count = 0
 
     def start(self) -> None:
         # SteamVR can take a moment to be ready; retry init briefly instead of crashing.
@@ -391,43 +398,65 @@ class DashboardOverlayClient:
 
     def _pump_events(self) -> None:
         # Best-effort click support.
+        if self._event_poll_broken:
+            return
         try:
+            if self.overlay is None:
+                return
             e = openvr.VREvent_t()
-            fn = None
-            if self.overlay is not None:
-                fn = "pollNextOverlayEvent" if hasattr(self.overlay, "pollNextOverlayEvent") else "PollNextOverlayEvent"
-            if self.overlay is None or fn is None or not hasattr(self.overlay, fn):
+            fn = "pollNextOverlayEvent" if hasattr(self.overlay, "pollNextOverlayEvent") else "PollNextOverlayEvent"
+            if not hasattr(self.overlay, fn):
                 return
             poll = getattr(self.overlay, fn)
+
             while True:
                 try:
-                    if self._poll_event_needs_size is None:
-                        try:
-                            ok = poll(self.handle, e)
-                            self._poll_event_needs_size = False
-                        except TypeError:
-                            ok = poll(self.handle, e, ctypes.sizeof(e))
-                            self._poll_event_needs_size = True
-                    elif self._poll_event_needs_size is True:
-                        ok = poll(self.handle, e, ctypes.sizeof(e))
-                    else:
-                        ok = poll(self.handle, e)
-                except TypeError:
-                    # Wrapper signature mismatch; flip once and retry without spamming logs.
-                    if self._poll_event_needs_size is True:
-                        self._poll_event_needs_size = False
-                    elif self._poll_event_needs_size is False:
-                        self._poll_event_needs_size = True
-                    else:
-                        self._poll_event_needs_size = False
-                    continue
+                    # The openvr python binding used in this repo expects (overlay_handle, VREvent_t).
+                    ok = poll(self.handle, e)
+                except TypeError as ex:
+                    log.error(
+                        "Overlay event polling disabled: %s signature mismatch (%s: %s)",
+                        fn,
+                        type(ex).__name__,
+                        ex,
+                    )
+                    self._event_poll_broken = True
+                    return
                 except Exception as ex:
                     log.error("OpenVR call failed: %s -> %s: %s", fn, type(ex).__name__, ex)
                     return
 
                 if not ok:
                     break
+
+                self._events_polled_since += 1
+                now = time.monotonic()
+                if now - self._events_last_rate_time >= 1.0:
+                    log.info("overlay_events_polled_per_sec=%d", self._events_polled_since)
+                    self._events_polled_since = 0
+                    self._events_last_rate_time = now
+
+                if (not self._logged_first_event) and hasattr(e, "data") and hasattr(e.data, "mouse"):
+                    try:
+                        nx = float(e.data.mouse.x)
+                        ny = float(e.data.mouse.y)
+                        px = nx * float(self.w)
+                        py = ny * float(self.h)
+                        log.info(
+                            "overlay_first_event type=%d mouse_norm=(%.3f,%.3f) mouse_px=(%.1f,%.1f)",
+                            int(e.eventType),
+                            nx,
+                            ny,
+                            px,
+                            py,
+                        )
+                    except Exception:
+                        log.info("overlay_first_event type=%d", int(e.eventType))
+                    self._logged_first_event = True
+
                 if int(e.eventType) == int(getattr(openvr, "VREvent_MouseButtonDown", 200)):
+                    self._click_toggle = not self._click_toggle
+                    self._click_count += 1
                     x = float(e.data.mouse.x) * self.w
                     y = float(e.data.mouse.y) * self.h
                     for b in self.buttons:
@@ -459,7 +488,7 @@ class DashboardOverlayClient:
 
     def _render(self, state: Dict) -> QImage:
         img = QImage(self.w, self.h, QImage.Format.Format_RGBA8888)
-        img.fill(QColor(18, 18, 18))
+        img.fill(QColor(26, 40, 60) if self._click_toggle else QColor(18, 18, 18))
         p = QPainter(img)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
@@ -468,6 +497,9 @@ class DashboardOverlayClient:
         p.setFont(title)
         p.setPen(QColor(235, 235, 235))
         p.drawText(24, 40, "LighthouseLayoutCoach (Dashboard Panel)")
+        p.setFont(QFont("Segoe UI", 12))
+        p.setPen(QColor(190, 190, 190))
+        p.drawText(24, 62, f"Input proof: clicks={self._click_count}")
 
         connected = bool(state.get("connected"))
         p.setFont(QFont("Segoe UI", 12))
@@ -750,9 +782,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--url", default="http://127.0.0.1:17835", help="State server base URL")
     ap.add_argument("--fps", type=float, default=10.0)
     ap.add_argument("--overlay-test", action="store_true", help="Initialize OpenVR and submit one 256x256 test image")
+    ap.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
     args = ap.parse_args(argv)
 
-    log_path = setup_logging(level=logging.INFO, filename="LighthouseLayoutCoach_overlay.log")
+    log_level = logging.DEBUG if (args.debug or os.environ.get("LLC_DEBUG") == "1") else logging.INFO
+    log_path = setup_logging(level=log_level, filename="LighthouseLayoutCoach_overlay.log")
     log.info("Overlay logging to %s", log_path)
 
     app = QGuiApplication([])
@@ -760,12 +794,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         client.start()
     except openvr.error_code.InitError_Init_HmdNotFound:
-        if args.overlay_test:
-            log.info(
-                "OpenVR init failed: InitError_Init_HmdNotFound. This is expected when no HMD/SteamVR runtime is active; "
-                "overlay handle validation and SetOverlayRaw submission cannot be performed in this environment."
-            )
-        raise
+        log.info(
+            "OpenVR init failed: InitError_Init_HmdNotFound. This is expected when no HMD/SteamVR runtime is active; "
+            "overlay handle validation and SetOverlayRaw submission cannot be performed in this environment."
+        )
+        return 0 if args.overlay_test else 2
+    except Exception as e:
+        log.error("Overlay init failed: %s: %s", type(e).__name__, e)
+        return 2
     try:
         if args.overlay_test:
             test = QImage(256, 256, QImage.Format.Format_RGBA8888)
@@ -782,7 +818,10 @@ def main(argv: list[str] | None = None) -> int:
 
         client.run(args.fps)
     finally:
-        client.shutdown()
+        try:
+            client.shutdown()
+        except Exception:
+            pass
     return 0
 
 

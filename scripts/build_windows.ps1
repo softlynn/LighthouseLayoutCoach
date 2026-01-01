@@ -50,6 +50,23 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed with exit code $LASTE
 Write-Host "Built EXE: dist\\LighthouseLayoutCoach.exe"
 if (!(Test-Path "dist\\LighthouseLayoutCoach.exe")) { throw "Expected dist\\LighthouseLayoutCoach.exe not found" }
 
+# Build an onedir overlay helper to avoid onefile _MEI extraction/cleanup warnings when starting/stopping VR mode.
+if (Test-Path "packaging\\LighthouseLayoutCoachOverlay.spec") {
+  pyinstaller --noconfirm packaging\\LighthouseLayoutCoachOverlay.spec
+  if ($LASTEXITCODE -ne 0) { throw "Overlay helper build failed with exit code $LASTEXITCODE" }
+
+  $overlayExe = Join-Path $repo "dist\\LighthouseLayoutCoachOverlay\\LighthouseLayoutCoachOverlay.exe"
+  if (Test-Path $overlayExe) {
+    New-Item -ItemType Directory -Force -Path "dist\\overlay" | Out-Null
+    Copy-Item -Force $overlayExe "dist\\overlay\\LighthouseLayoutCoachOverlay.exe"
+    Write-Host "Built overlay helper: dist\\overlay\\LighthouseLayoutCoachOverlay.exe"
+  } else {
+    Write-Host "WARNING: Expected overlay helper EXE not found: $overlayExe"
+  }
+} else {
+  Write-Host "WARNING: Missing packaging\\LighthouseLayoutCoachOverlay.spec; overlay helper will not be built."
+}
+
 # Read VERSION for installer metadata
 $version = (Get-Content -Path (Join-Path $repo "VERSION") -TotalCount 1).Trim()
 if (!$version) { $version = "0.0.0" }

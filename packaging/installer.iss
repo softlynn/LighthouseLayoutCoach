@@ -8,9 +8,14 @@
 #endif
 
 #define VcRedistPath "..\\packaging\\redist\\vc_redist.x64.exe"
+#define OverlayHelperPath "..\\dist\\overlay\\LighthouseLayoutCoachOverlay.exe"
 
 #ifexist "{#VcRedistPath}"
 #define BundleVcRedist
+#endif
+
+#ifexist "{#OverlayHelperPath}"
+#define BundleOverlayHelper
 #endif
 
 [Setup]
@@ -38,6 +43,10 @@ Name: "{localappdata}\{#MyAppName}\tmp"
 
 [Files]
 Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; Onedir overlay helper (avoids onefile temp extraction/cleanup dialogs when starting/stopping VR mode)
+#ifdef BundleOverlayHelper
+Source: "{#OverlayHelperPath}"; DestDir: "{app}\overlay"; Flags: ignoreversion
+#endif
 ; Optional dependency installer (bundled by scripts/build_windows.ps1 when available)
 #ifdef BundleVcRedist
 Source: "{#VcRedistPath}"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall
