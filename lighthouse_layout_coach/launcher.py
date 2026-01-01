@@ -60,11 +60,13 @@ def create_launcher_window(auto_start_vr: bool = False):
             self.btn_vr = QPushButton("VR Overlay Mode")
             self.btn_stop = QPushButton("Stop")
             self.btn_stop.setEnabled(False)
+            self.btn_updates = QPushButton("Check for Updates…")
 
             top = QHBoxLayout()
             top.addWidget(self.btn_desktop)
             top.addWidget(self.btn_vr)
             top.addWidget(self.btn_stop)
+            top.addWidget(self.btn_updates)
             top.addStretch(1)
 
             root = QWidget()
@@ -77,6 +79,7 @@ def create_launcher_window(auto_start_vr: bool = False):
             self.btn_desktop.clicked.connect(self._start_desktop)
             self.btn_vr.clicked.connect(self._start_vr)
             self.btn_stop.clicked.connect(self._stop_vr)
+            self.btn_updates.clicked.connect(self._check_updates)
 
             self._timer = QTimer(self)
             self._timer.timeout.connect(self._tick)
@@ -100,6 +103,15 @@ def create_launcher_window(auto_start_vr: bool = False):
             self._desktop_window = create_main_window()
             self._desktop_window.destroyed.connect(self._desktop_closed)
             self._desktop_window.show()
+
+        def _check_updates(self) -> None:
+            try:
+                from .update_checker import UpdateDialog
+
+                dlg = UpdateDialog(parent=self)
+                dlg.exec()
+            except Exception as e:
+                self._append_log(f"Update check failed: {type(e).__name__}: {e}")
 
         def _desktop_closed(self) -> None:
             self._append_log("Desktop window closed.")

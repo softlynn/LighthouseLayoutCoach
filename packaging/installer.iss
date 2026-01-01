@@ -7,6 +7,12 @@
 #define MyAppVersion "0.0.0"
 #endif
 
+#define VcRedistPath "..\\packaging\\redist\\vc_redist.x64.exe"
+
+#ifexist "{#VcRedistPath}"
+#define BundleVcRedist
+#endif
+
 [Setup]
 AppId={{7E4C4B30-0E73-4C9A-B7B0-1E1C1E7D58D1}}
 AppName={#MyAppName}
@@ -27,10 +33,15 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
+[Dirs]
+Name: "{localappdata}\{#MyAppName}\tmp"
+
 [Files]
 Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; Optional dependency installer (bundled by scripts/build_windows.ps1 when available)
-Source: "..\packaging\redist\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall; Check: VcRedistIsBundled
+#ifdef BundleVcRedist
+Source: "{#VcRedistPath}"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall
+#endif
 
 [Icons]
 Name: "{group}\Lighthouse Layout Coach (Launcher)"; Filename: "{app}\{#MyAppExeName}"
@@ -43,7 +54,9 @@ Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "A
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Lighthouse Layout Coach"; Flags: nowait postinstall skipifsilent
+#ifdef BundleVcRedist
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Runtime…"; Flags: waituntilterminated runhidden; Check: VcRedistNeedsInstall
+#endif
 
 [Code]
 function VcRegKey: string;
@@ -67,12 +80,7 @@ begin
   end;
 end;
 
-function VcRedistIsBundled: Boolean;
-begin
-  Result := FileExists(ExpandConstant('{tmp}\vc_redist.x64.exe'));
-end;
-
 function VcRedistNeedsInstall: Boolean;
 begin
-  Result := (not VcRedistInstalled()) and VcRedistIsBundled();
+  Result := (not VcRedistInstalled());
 end;

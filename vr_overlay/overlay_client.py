@@ -83,6 +83,7 @@ class DashboardOverlayClient:
         self._last_error_log_time = 0.0
         self._last_recreate_time = 0.0
         self._recreate_cooldown_s = 5.0
+        self._last_submit_ok_time: Optional[float] = None
 
         self._cached_state: Dict = {}
         self._next_state_fetch_time = 0.0
@@ -274,9 +275,13 @@ class DashboardOverlayClient:
     def _find_overlay_handle(self, key: str):
         if self.overlay is None:
             return None
+        fn = "findOverlay" if hasattr(self.overlay, "findOverlay") else "FindOverlay"
         try:
-            res = _safe_call(self.overlay, "FindOverlay", "findOverlay", key)
-        except Exception:
+            res = getattr(self.overlay, fn)(key)
+        except getattr(openvr.error_code, "OverlayError_UnknownOverlay", Exception):
+            return None
+        except Exception as e:
+            log.debug("OpenVR call failed: %s -> %s: %s", fn, type(e).__name__, e)
             return None
 
         handle = None
@@ -305,6 +310,14 @@ class DashboardOverlayClient:
             self.handle,
             openvr.VROverlayInputMethod_Mouse,
         )
+        # Best-effort: ensure mouse coordinates map 1:1 to pixels for click support.
+        try:
+            scale = openvr.HmdVector2_t()
+            scale.v[0] = float(self.w)
+            scale.v[1] = float(self.h)
+            _safe_call(self.overlay, "SetOverlayMouseScale", "setOverlayMouseScale", self.handle, scale)
+        except Exception:
+            pass
 
     def _show_dashboard(self) -> None:
         if self.overlay is None:
@@ -380,19 +393,37 @@ class DashboardOverlayClient:
         # Best-effort click support.
         try:
             e = openvr.VREvent_t()
+            fn = None
+            if self.overlay is not None:
+                fn = "pollNextOverlayEvent" if hasattr(self.overlay, "pollNextOverlayEvent") else "PollNextOverlayEvent"
+            if self.overlay is None or fn is None or not hasattr(self.overlay, fn):
+                return
+            poll = getattr(self.overlay, fn)
             while True:
                 try:
-                    if self._poll_event_needs_size is False:
-                        ok = _safe_call(self.overlay, "PollNextOverlayEvent", "pollNextOverlayEvent", self.handle, e)
+                    if self._poll_event_needs_size is None:
+                        try:
+                            ok = poll(self.handle, e)
+                            self._poll_event_needs_size = False
+                        except TypeError:
+                            ok = poll(self.handle, e, ctypes.sizeof(e))
+                            self._poll_event_needs_size = True
+                    elif self._poll_event_needs_size is True:
+                        ok = poll(self.handle, e, ctypes.sizeof(e))
                     else:
-                        ok = _safe_call(
-                            self.overlay, "PollNextOverlayEvent", "pollNextOverlayEvent", self.handle, e, ctypes.sizeof(e)
-                        )
-                        self._poll_event_needs_size = True
+                        ok = poll(self.handle, e)
                 except TypeError:
-                    # Some openvr python wrappers don't accept the size argument.
-                    self._poll_event_needs_size = False
-                    ok = _safe_call(self.overlay, "PollNextOverlayEvent", "pollNextOverlayEvent", self.handle, e)
+                    # Wrapper signature mismatch; flip once and retry without spamming logs.
+                    if self._poll_event_needs_size is True:
+                        self._poll_event_needs_size = False
+                    elif self._poll_event_needs_size is False:
+                        self._poll_event_needs_size = True
+                    else:
+                        self._poll_event_needs_size = False
+                    continue
+                except Exception as ex:
+                    log.error("OpenVR call failed: %s -> %s: %s", fn, type(ex).__name__, ex)
+                    return
 
                 if not ok:
                     break
@@ -648,6 +679,7 @@ class DashboardOverlayClient:
             try:
                 _safe_call(self.overlay, "SetOverlayRaw", "setOverlayRaw", handle, buf, w, h, depth)
                 self.last_error = None
+                self._last_submit_ok_time = time.monotonic()
                 return
             except openvr.error_code.OverlayError_RequestFailed as e:
                 last_exc = e
@@ -671,7 +703,7 @@ class DashboardOverlayClient:
                 log.error("SetOverlayRaw failed: %s: %s", type(e).__name__, e)
                 return
 
-        # Back off 2–5 seconds on RequestFailed; do not recreate spam or cause flicker.
+        # Back off 2-5 seconds on RequestFailed; do not recreate spam or cause flicker.
         backoff_s = float(random.choice([2.0, 3.0, 5.0]))
         self._next_submit_time = time.monotonic() + backoff_s
         now = time.monotonic()
@@ -686,18 +718,24 @@ class DashboardOverlayClient:
                 len(data),
             )
 
-        # If failures persist, allow a recreate only on cooldown (hard failure path).
-        if self._recreate_if_allowed(f"OverlayError_RequestFailed after retries ({w=} {h=} {depth=} len={len(data)})"):
+        # If failures persist, allow a recreate only on cooldown and only after a sustained outage
+        # (avoid flicker from recreate spam).
+        last_ok = self._last_submit_ok_time
+        sustained_outage = (last_ok is None) or ((time.monotonic() - last_ok) > 10.0)
+        if sustained_outage and self._recreate_if_allowed(
+            f"OverlayError_RequestFailed after retries ({w=} {h=} {depth=} len={len(data)})"
+        ):
             try:
                 if self.overlay is not None and self._is_valid_handle(self.handle):
                     _safe_call(self.overlay, "SetOverlayRaw", "setOverlayRaw", self.handle, buf, w, h, depth)
                     self.last_error = None
+                    self._last_submit_ok_time = time.monotonic()
                     return
             except Exception as e:
                 last_exc = e
 
         log.error(
-            "SetOverlayRaw disabled (continuing without crashing) (w=%d h=%d depth=%d len=%d): %s: %s",
+            "SetOverlayRaw failed after retries; continuing without crashing (w=%d h=%d depth=%d len=%d): %s: %s",
             w,
             h,
             depth,
