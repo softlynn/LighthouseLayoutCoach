@@ -50,6 +50,10 @@ jobs:
           gh release view $tag | Out-Null
           if ($LASTEXITCODE -ne 0) { $exists = $false }
           if (-not $exists) {
-            gh release create $tag --title $tag --notes "Automated build for $tag. (Unsigned binaries may trigger Windows SmartScreen.)"
+            if (Test-Path RELEASE_NOTES.md) {
+              gh release create $tag --title $tag --notes-file RELEASE_NOTES.md
+            } else {
+              gh release create $tag --title $tag --notes "Automated build for $tag. (Unsigned binaries may trigger Windows SmartScreen.)"
+            }
           }
           gh release upload $tag dist/release_assets/LighthouseLayoutCoach.exe dist/release_assets/LighthouseLayoutCoach_Setup.exe --clobber

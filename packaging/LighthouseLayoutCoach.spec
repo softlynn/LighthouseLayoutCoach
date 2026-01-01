@@ -19,6 +19,8 @@ binaries += collect_dynamic_libs("openvr")
 
 datas = [
     (os.path.join(basedir, "VERSION"), "."),
+    # App icon file used by the runtime (window icon); keep path stable in the bundle.
+    (os.path.join(basedir, "assets", "icons", "app_icon.ico"), os.path.join("assets", "icons")),
 ]
 
 a = Analysis(
@@ -44,6 +46,7 @@ exe = EXE(
     a.datas,
     [],
     name="LighthouseLayoutCoach",
+    icon=os.path.join(basedir, "assets", "icons", "app_icon.ico"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

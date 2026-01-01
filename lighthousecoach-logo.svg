@@ -1,0 +1,29 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" id="svgLogo">
+                        <defs>
+                            <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#8b5cf6;stop-opacity:1"/>
+                                <stop offset="50%" style="stop-color:#6366f1;stop-opacity:1"/>
+                                <stop offset="100%" style="stop-color:#00d4ff;stop-opacity:1"/>
+                            </linearGradient>
+                            <radialGradient id="bgGradSvg">
+                                <stop offset="0%" style="stop-color:#6366f1;stop-opacity:0.15"/>
+                                <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:0.05"/>
+                            </radialGradient>
+                        </defs>
+                        
+                        <!-- Circular background -->
+                        <circle cx="64" cy="64" r="58" fill="url(#bgGradSvg)"/>
+                        <circle cx="64" cy="64" r="58" fill="none" stroke="url(#logoGrad)" stroke-width="2" opacity="0.3"/>
+                        
+                        <!-- Base stations - thicker squares -->
+                        <rect x="18" y="18" width="20" height="20" fill="white" rx="3" stroke="url(#logoGrad)" stroke-width="2"/>
+                        <rect x="90" y="90" width="20" height="20" fill="white" rx="3" stroke="url(#logoGrad)" stroke-width="2"/>
+                        
+                        <!-- Tracking beams - thicker -->
+                        <path d="M 38 28 L 58 58" stroke="url(#logoGrad)" stroke-width="3" opacity="0.5"/>
+                        <path d="M 90 100 L 70 70" stroke="url(#logoGrad)" stroke-width="3" opacity="0.5"/>
+                        
+                        <!-- Center tracker (VR headset) - larger -->
+                        <circle cx="64" cy="64" r="11" fill="url(#logoGrad)"/>
+                        <circle cx="64" cy="64" r="6" fill="white"/>
+                    </svg>

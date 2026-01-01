@@ -192,6 +192,7 @@ def cli_main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--vr", action="store_true", help="Run VR overlay mode (server + overlay client)")
     ap.add_argument("--overlay", action="store_true", help="Alias for --vr")
     ap.add_argument("--smoke", action="store_true", help="Non-UI smoke test (verifies OpenVR DLL loads)")
+    ap.add_argument("--overlay-test", action="store_true", help="Submit one overlay frame (OpenVR init + 256x256 image)")
     ap.add_argument("--overlay-client", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--url", default="http://127.0.0.1:17835", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
@@ -212,10 +213,26 @@ def cli_main(argv: Optional[list[str]] = None) -> int:
 
         return overlay_main(["--url", args.url])
 
+    if args.overlay_test:
+        from vr_overlay.overlay_client import main as overlay_main
+
+        return overlay_main(["--overlay-test", "--url", args.url])
+
     from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QIcon
 
     app = QApplication(sys.argv)
     app.setApplicationName("LighthouseLayoutCoach")
+
+    try:
+        from pathlib import Path
+
+        base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+        icon_path = base / "assets" / "icons" / "app_icon.ico"
+        if icon_path.exists():
+            app.setWindowIcon(QIcon(str(icon_path)))
+    except Exception:
+        pass
 
     if args.desktop:
         from .main import create_main_window

@@ -3,21 +3,30 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import logging
 import math
 import time
 import urllib.request
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import openvr
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QImage, QPainter, QPen
 
 
+log = logging.getLogger("llc.overlay")
+
+
 def _safe_call(obj, pascal: str, camel: str, *args, **kwargs):
-    if hasattr(obj, camel):
-        return getattr(obj, camel)(*args, **kwargs)
-    return getattr(obj, pascal)(*args, **kwargs)
+    fn = camel if hasattr(obj, camel) else pascal
+    try:
+        return getattr(obj, fn)(*args, **kwargs)
+    except Exception as e:
+        # openvr raises specific exception types like openvr.error_code.OverlayError_RequestFailed
+        # via its error_code check wrapper; the exception class name is the enum name.
+        log.error("OpenVR call failed: %s -> %s: %s", fn, type(e).__name__, e)
+        raise
 
 
 @dataclass(frozen=True)
@@ -43,22 +52,15 @@ class DashboardOverlayClient:
         self.overlay = None
         self.handle = None
         self.thumb = None
+        self._openvr_inited = False
 
     def start(self) -> None:
         openvr.init(openvr.VRApplication_Overlay)
+        self._openvr_inited = True
         self.overlay = openvr.VROverlay()
-        res = _safe_call(self.overlay, "CreateDashboardOverlay", "createDashboardOverlay", "lighthouse.layout.coach", "Lighthouse Layout Coach")
-        if isinstance(res, tuple) and len(res) == 3:
-            _, self.handle, self.thumb = res
-        elif isinstance(res, tuple) and len(res) == 2:
-            self.handle, self.thumb = res
-        else:
-            self.handle = res
-            self.thumb = None
+        self._create_or_recreate_overlay()
 
-        _safe_call(self.overlay, "SetOverlayWidthInMeters", "setOverlayWidthInMeters", self.handle, 1.7)
-        _safe_call(self.overlay, "SetOverlayInputMethod", "setOverlayInputMethod", self.handle, openvr.VROverlayInputMethod_Mouse)
-        _safe_call(self.overlay, "ShowDashboard", "showDashboard", "lighthouse.layout.coach")
+        self._configure_overlay()
 
         if self.thumb is not None:
             thumb_img = QImage(256, 256, QImage.Format.Format_RGBA8888)
@@ -80,6 +82,7 @@ class DashboardOverlayClient:
             pass
         try:
             openvr.shutdown()
+            self._openvr_inited = False
         except Exception:
             pass
 
@@ -92,6 +95,62 @@ class DashboardOverlayClient:
             self._set_raw(self.handle, img)
             self._pump_events()
             time.sleep(max(0.0, dt - (time.perf_counter() - start)))
+
+    def _create_or_recreate_overlay(self) -> None:
+        if self.overlay is None:
+            raise RuntimeError("Overlay interface not created")
+
+        if self.handle is not None:
+            try:
+                _safe_call(self.overlay, "DestroyOverlay", "destroyOverlay", self.handle)
+            except Exception:
+                pass
+
+        res = _safe_call(
+            self.overlay,
+            "CreateDashboardOverlay",
+            "createDashboardOverlay",
+            "lighthouse.layout.coach",
+            "Lighthouse Layout Coach",
+        )
+        if isinstance(res, tuple) and len(res) == 3:
+            _, self.handle, self.thumb = res
+        elif isinstance(res, tuple) and len(res) == 2:
+            self.handle, self.thumb = res
+        else:
+            self.handle = res
+            self.thumb = None
+
+    def _configure_overlay(self) -> None:
+        if self.overlay is None or self.handle is None:
+            return
+        _safe_call(self.overlay, "SetOverlayWidthInMeters", "setOverlayWidthInMeters", self.handle, 1.7)
+        _safe_call(
+            self.overlay,
+            "SetOverlayInputMethod",
+            "setOverlayInputMethod",
+            self.handle,
+            openvr.VROverlayInputMethod_Mouse,
+        )
+        _safe_call(self.overlay, "ShowDashboard", "showDashboard", "lighthouse.layout.coach")
+
+    def _is_valid_handle(self, handle) -> bool:
+        if handle is None:
+            return False
+        try:
+            h = int(handle)
+        except Exception:
+            return False
+        if h == 0:
+            return False
+        invalid = getattr(openvr, "k_ulOverlayHandleInvalid", None)
+        if invalid is not None:
+            try:
+                if h == int(invalid):
+                    return False
+            except Exception:
+                pass
+        return True
 
     def _get_json(self, path: str) -> Dict:
         try:
@@ -336,21 +395,132 @@ class DashboardOverlayClient:
     def _set_raw(self, handle, img: QImage) -> None:
         if img.format() != QImage.Format.Format_RGBA8888:
             img = img.convertToFormat(QImage.Format.Format_RGBA8888)
+
+        w = int(img.width())
+        h = int(img.height())
+        depth = 4
+        expected_len = w * h * depth
+
         data = img.bits().tobytes()
-        buf = ctypes.create_string_buffer(data)
-        _safe_call(self.overlay, "SetOverlayRaw", "setOverlayRaw", handle, buf, img.width(), img.height(), 4)
+        if not isinstance(data, (bytes, bytearray)):
+            log.error("SetOverlayRaw skipped: buffer type is %s (expected bytes/bytearray)", type(data).__name__)
+            return
+
+        if len(data) != expected_len:
+            # QImage can include scanline padding; strip to w*depth per row when needed.
+            bpl = int(img.bytesPerLine())
+            row_len = w * depth
+            if bpl >= row_len and h > 0:
+                data = b"".join(data[y * bpl : y * bpl + row_len] for y in range(h))
+
+        if len(data) != expected_len:
+            log.error(
+                "SetOverlayRaw skipped: buffer length mismatch (got=%d expected=%d w=%d h=%d depth=%d)",
+                len(data),
+                expected_len,
+                w,
+                h,
+                depth,
+            )
+            return
+
+        if not self._openvr_inited:
+            log.error("SetOverlayRaw skipped: OpenVR not initialized")
+            return
+        if self.overlay is None:
+            log.error("SetOverlayRaw skipped: overlay interface is None")
+            return
+        if not self._is_valid_handle(handle):
+            log.warning("SetOverlayRaw: invalid overlay handle (%r); recreating overlay…", handle)
+            try:
+                self._create_or_recreate_overlay()
+                self._configure_overlay()
+                handle = self.handle
+            except Exception as e:
+                log.error("SetOverlayRaw skipped: failed to recreate overlay: %s: %s", type(e).__name__, e)
+                return
+            if not self._is_valid_handle(handle):
+                log.error("SetOverlayRaw skipped: invalid overlay handle after recreate (%r)", handle)
+                return
+
+        log.debug("SetOverlayRaw: handle=%s w=%d h=%d depth=%d len=%d", handle, w, h, depth, len(data))
+        buf = ctypes.create_string_buffer(data, len(data))
+
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, 4):
+            try:
+                _safe_call(self.overlay, "SetOverlayRaw", "setOverlayRaw", handle, buf, w, h, depth)
+                return
+            except openvr.error_code.OverlayError_RequestFailed as e:
+                last_exc = e
+                log.warning("SetOverlayRaw RequestFailed (attempt %d/3); retrying…", attempt)
+                time.sleep(0.05 * attempt)
+            except Exception as e:
+                last_exc = e
+                log.error("SetOverlayRaw failed: %s: %s", type(e).__name__, e)
+                return
+
+        log.warning(
+            "SetOverlayRaw still failing after retries (w=%d h=%d depth=%d len=%d); recreating overlay handle and retrying once…",
+            w,
+            h,
+            depth,
+            len(data),
+        )
+        try:
+            self._create_or_recreate_overlay()
+            if self._is_valid_handle(self.handle):
+                self._configure_overlay()
+                _safe_call(self.overlay, "SetOverlayRaw", "setOverlayRaw", self.handle, buf, w, h, depth)
+                return
+        except Exception as e:
+            last_exc = e
+
+        log.error(
+            "SetOverlayRaw disabled (continuing without crashing) (w=%d h=%d depth=%d len=%d): %s: %s",
+            w,
+            h,
+            depth,
+            len(data),
+            type(last_exc).__name__,
+            last_exc,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:17835", help="State server base URL")
     ap.add_argument("--fps", type=float, default=20.0)
+    ap.add_argument("--overlay-test", action="store_true", help="Initialize OpenVR and submit one 256x256 test image")
     args = ap.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
     app = QGuiApplication([])
     client = DashboardOverlayClient(args.url)
-    client.start()
     try:
+        client.start()
+    except openvr.error_code.InitError_Init_HmdNotFound:
+        if args.overlay_test:
+            log.info(
+                "OpenVR init failed: InitError_Init_HmdNotFound. This is expected when no HMD/SteamVR runtime is active; "
+                "overlay handle validation and SetOverlayRaw submission cannot be performed in this environment."
+            )
+        raise
+    try:
+        if args.overlay_test:
+            test = QImage(256, 256, QImage.Format.Format_RGBA8888)
+            test.fill(QColor(30, 30, 30, 255))
+            p = QPainter(test)
+            p.setPen(QColor(235, 235, 235, 255))
+            f = QFont("Segoe UI", 26)
+            f.setBold(True)
+            p.setFont(f)
+            p.drawText(24, 140, "Overlay Test")
+            p.end()
+            client._set_raw(client.handle, test)
+            return 0
+
         client.run(args.fps)
     finally:
         client.shutdown()
