@@ -40,5 +40,7 @@ unity_vr_coach/UserSettings/
 unity_vr_coach/ProjectSettings/*
 !unity_vr_coach/ProjectSettings/ProjectVersion.txt
 unity_vr_coach/Assets/Samples/
+unity_vr_coach/Assets/XR/
+unity_vr_coach/Assets/XRI/
 unity_vr_coach/*.sln
 unity_vr_coach/*.csproj
