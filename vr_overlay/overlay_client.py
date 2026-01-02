@@ -102,6 +102,7 @@ class DashboardOverlayClient:
         self._hover_button_id: Optional[str] = None
         self._click_toggle = False
         self._click_count = 0
+        self._logged_first_event_by_handle: dict[int, bool] = {}
 
     def start(self) -> None:
         # SteamVR can take a moment to be ready; retry init briefly instead of crashing.
@@ -310,39 +311,48 @@ class DashboardOverlayClient:
             return
 
     def _configure_overlay(self) -> None:
-        if self.overlay is None or self.handle is None:
+        if self.overlay is None:
             return
-        _safe_call(self.overlay, "SetOverlayWidthInMeters", "setOverlayWidthInMeters", self.handle, 1.7)
-        _safe_call(
-            self.overlay,
-            "SetOverlayInputMethod",
-            "setOverlayInputMethod",
-            self.handle,
-            openvr.VROverlayInputMethod_Mouse,
-        )
-        # Best-effort: ensure mouse coordinates map 1:1 to pixels for click support.
-        try:
-            scale = openvr.HmdVector2_t()
-            scale.v[0] = float(self.w)
-            scale.v[1] = float(self.h)
-            _safe_call(self.overlay, "SetOverlayMouseScale", "setOverlayMouseScale", self.handle, scale)
-        except Exception:
-            pass
-        # Ensure the dashboard overlay is marked interactive for pointer/controller ray input.
-        try:
-            flags_to_enable = [
-                "VROverlayFlags_MakeOverlaysInteractiveIfVisible",
-                "VROverlayFlags_VisibleInDashboard",
-                "VROverlayFlags_SendVRTouchpadEvents",
-                "VROverlayFlags_SendVRSmoothScrollEvents",
-            ]
-            for name in flags_to_enable:
-                flag = getattr(openvr, name, None)
-                if flag is None:
-                    continue
-                _safe_call(self.overlay, "SetOverlayFlag", "setOverlayFlag", self.handle, flag, True)
-        except Exception:
-            pass
+
+        def _configure_handle(h) -> None:
+            if not self._is_valid_handle(h):
+                return
+            _safe_call(self.overlay, "SetOverlayWidthInMeters", "setOverlayWidthInMeters", h, 1.7)
+            _safe_call(
+                self.overlay,
+                "SetOverlayInputMethod",
+                "setOverlayInputMethod",
+                h,
+                openvr.VROverlayInputMethod_Mouse,
+            )
+            # Best-effort: ensure mouse coordinates map 1:1 to pixels for click support.
+            try:
+                scale = openvr.HmdVector2_t()
+                scale.v[0] = float(self.w)
+                scale.v[1] = float(self.h)
+                _safe_call(self.overlay, "SetOverlayMouseScale", "setOverlayMouseScale", h, scale)
+            except Exception:
+                pass
+            # Ensure the overlay is marked interactive for pointer/controller ray input.
+            try:
+                flags_to_enable = [
+                    "VROverlayFlags_MakeOverlaysInteractiveIfVisible",
+                    "VROverlayFlags_VisibleInDashboard",
+                    "VROverlayFlags_SendVRTouchpadEvents",
+                    "VROverlayFlags_SendVRSmoothScrollEvents",
+                    "VROverlayFlags_EnableClickStabilization",
+                ]
+                for name in flags_to_enable:
+                    flag = getattr(openvr, name, None)
+                    if flag is None:
+                        continue
+                    _safe_call(self.overlay, "SetOverlayFlag", "setOverlayFlag", h, flag, True)
+            except Exception:
+                pass
+
+        # Dashboard overlays have both a main handle and a thumbnail handle; configure both.
+        _configure_handle(self.handle)
+        _configure_handle(self.thumb)
 
     def _show_dashboard(self) -> None:
         if self.overlay is None:
@@ -418,19 +428,33 @@ class DashboardOverlayClient:
         # Best-effort click support.
         if self._event_poll_broken:
             return
-        try:
-            if self.overlay is None:
-                return
-            e = openvr.VREvent_t()
-            fn = "pollNextOverlayEvent" if hasattr(self.overlay, "pollNextOverlayEvent") else "PollNextOverlayEvent"
-            if not hasattr(self.overlay, fn):
-                return
-            poll = getattr(self.overlay, fn)
+        if self.overlay is None:
+            return
 
+        fn = "pollNextOverlayEvent" if hasattr(self.overlay, "pollNextOverlayEvent") else "PollNextOverlayEvent"
+        if not hasattr(self.overlay, fn):
+            return
+        poll = getattr(self.overlay, fn)
+
+        e = openvr.VREvent_t()
+
+        def _maybe_name_event(event_type: int) -> str:
+            # Best-effort mapping without importing extra tables.
+            for k, v in openvr.__dict__.items():
+                if k.startswith("VREvent_") and isinstance(v, int) and int(v) == int(event_type):
+                    return k
+            return str(int(event_type))
+
+        def _pump_for_handle(h) -> None:
+            if not self._is_valid_handle(h):
+                return
+            try:
+                handle_int = int(h)
+            except Exception:
+                return
             while True:
                 try:
-                    # The openvr python binding used in this repo expects (overlay_handle, VREvent_t).
-                    ok = poll(self.handle, e)
+                    ok = poll(h, e)
                 except TypeError as ex:
                     log.error(
                         "Overlay event polling disabled: %s signature mismatch (%s: %s)",
@@ -454,22 +478,26 @@ class DashboardOverlayClient:
                     self._events_polled_since = 0
                     self._events_last_rate_time = now
 
-                if (not self._logged_first_event) and hasattr(e, "data") and hasattr(e.data, "mouse"):
+                if not self._logged_first_event_by_handle.get(handle_int):
+                    et = int(e.eventType)
+                    name = _maybe_name_event(et)
                     try:
                         nx = float(e.data.mouse.x)
                         ny = float(e.data.mouse.y)
                         px = nx * float(self.w)
                         py = ny * float(self.h)
                         log.info(
-                            "overlay_first_event type=%d mouse_norm=(%.3f,%.3f) mouse_px=(%.1f,%.1f)",
-                            int(e.eventType),
+                            "overlay_first_event handle=%s type=%s mouse_norm=(%.3f,%.3f) mouse_px=(%.1f,%.1f)",
+                            handle_int,
+                            name,
                             nx,
                             ny,
                             px,
                             py,
                         )
                     except Exception:
-                        log.info("overlay_first_event type=%d", int(e.eventType))
+                        log.info("overlay_first_event handle=%s type=%s", handle_int, name)
+                    self._logged_first_event_by_handle[handle_int] = True
                     self._logged_first_event = True
 
                 if int(e.eventType) == int(getattr(openvr, "VREvent_MouseMove", 300)):
@@ -520,6 +548,12 @@ class DashboardOverlayClient:
                                 self._post("/run_diagnostic")
                             elif b.id == "recompute":
                                 self._post("/recompute")
+
+        try:
+            # Some SteamVR configurations may deliver dashboard events to the thumbnail handle;
+            # poll both to avoid "non-interactable" issues.
+            _pump_for_handle(self.handle)
+            _pump_for_handle(self.thumb)
         except Exception:
             return
 
