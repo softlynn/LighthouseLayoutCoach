@@ -12,9 +12,9 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Optional
 
-log = logging.getLogger("lighthouse_layout_coach.launcher")
-
 from .logging_setup import setup_logging
+
+log = logging.getLogger("lighthouse_layout_coach.launcher")
 
 
 def _is_frozen() -> bool:
@@ -38,7 +38,16 @@ def create_launcher_window(auto_start_vr: bool = False):
     """
 
     from PySide6.QtCore import QTimer
-    from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QTextEdit, QVBoxLayout, QWidget
+    from PySide6.QtWidgets import (
+        QHBoxLayout,
+        QLabel,
+        QMainWindow,
+        QMessageBox,
+        QPushButton,
+        QTextEdit,
+        QVBoxLayout,
+        QWidget,
+    )
 
     from .main import create_main_window
 
@@ -50,23 +59,21 @@ def create_launcher_window(auto_start_vr: bool = False):
 
             self._vr: Optional[VRProcesses] = None
 
-            self.status = QLabel("Choose a mode:")
+            self.status = QLabel("Choose an action:")
             self.status.setWordWrap(True)
 
             self.log_view = QTextEdit()
             self.log_view.setReadOnly(True)
-            self.log_view.setPlaceholderText("Logs…")
+            self.log_view.setPlaceholderText("Logs.")
 
             self.btn_desktop = QPushButton("Desktop App")
-            self.btn_vr = QPushButton("VR Overlay Mode")
             self.btn_vr_coach = QPushButton("Launch VR Coach (Unity)")
-            self.btn_stop = QPushButton("Stop")
+            self.btn_stop = QPushButton("Stop VR Overlay")
             self.btn_stop.setEnabled(False)
-            self.btn_updates = QPushButton("Check for Updates…")
+            self.btn_updates = QPushButton("Check for Updates.")
 
             top = QHBoxLayout()
             top.addWidget(self.btn_desktop)
-            top.addWidget(self.btn_vr)
             top.addWidget(self.btn_vr_coach)
             top.addWidget(self.btn_stop)
             top.addWidget(self.btn_updates)
@@ -80,10 +87,9 @@ def create_launcher_window(auto_start_vr: bool = False):
             self.setCentralWidget(root)
 
             self.btn_desktop.clicked.connect(self._start_desktop)
-            self.btn_vr.clicked.connect(self._start_vr)
+            self.btn_vr_coach.clicked.connect(self._launch_vr_coach_unity)
             self.btn_stop.clicked.connect(self._stop_vr)
             self.btn_updates.clicked.connect(self._check_updates)
-            self.btn_vr_coach.clicked.connect(self._launch_vr_coach_unity)
 
             self._timer = QTimer(self)
             self._timer.timeout.connect(self._tick)
@@ -101,7 +107,7 @@ def create_launcher_window(auto_start_vr: bool = False):
             self.log_view.append(f"[{ts}] {line}")
 
         def _start_desktop(self) -> None:
-            self._append_log("Launching desktop UI…")
+            self._append_log("Launching desktop UI.")
             self.status.setText("Desktop mode: running (close desktop window to return).")
             self.hide()
             self._desktop_window = create_main_window()
@@ -120,18 +126,17 @@ def create_launcher_window(auto_start_vr: bool = False):
         def _desktop_closed(self) -> None:
             self._append_log("Desktop window closed.")
             self.show()
-            self.status.setText("Choose a mode:")
+            self.status.setText("Choose an action:")
 
         def _start_vr(self) -> None:
             if self._vr is not None:
                 return
-            self._append_log("Starting VR mode: state server + overlay client…")
-            log.info("VR mode start requested")
-            self.status.setText("VR mode: starting…")
+            self._append_log("Starting VR overlay mode: state server + overlay client.")
+            log.info("VR overlay start requested")
+            self.status.setText("VR overlay: starting.")
             self.btn_stop.setEnabled(True)
-            self.btn_vr.setEnabled(False)
-            self.btn_desktop.setEnabled(False)
             self.btn_vr_coach.setEnabled(False)
+            self.btn_desktop.setEnabled(False)
 
             url = "http://127.0.0.1:17835"
             from .state_server import StateEngine, serve_state
@@ -184,7 +189,7 @@ def create_launcher_window(auto_start_vr: bool = False):
                 overlay_log_thread=t,
             )
             self._append_log("Overlay process started.")
-            log.info("VR mode started: overlay_pid=%s", overlay_proc.pid)
+            log.info("VR overlay started: overlay_pid=%s", overlay_proc.pid)
 
         def _overlay_command(self, url: str):
             if _is_frozen():
@@ -203,8 +208,8 @@ def create_launcher_window(auto_start_vr: bool = False):
         def _stop_vr(self) -> None:
             if self._vr is None:
                 return
-            self._append_log("Stopping VR mode…")
-            log.info("VR mode stop requested")
+            self._append_log("Stopping VR overlay mode.")
+            log.info("VR overlay stop requested")
 
             try:
                 req = urllib.request.Request(self._vr.url + "/shutdown", method="POST", data=b"{}")
@@ -239,12 +244,11 @@ def create_launcher_window(auto_start_vr: bool = False):
 
             self._vr = None
             self.btn_stop.setEnabled(False)
-            self.btn_vr.setEnabled(True)
-            self.btn_desktop.setEnabled(True)
             self.btn_vr_coach.setEnabled(True)
-            self.status.setText("VR mode: stopped.")
-            self._append_log("VR mode stopped.")
-            log.info("VR mode stopped")
+            self.btn_desktop.setEnabled(True)
+            self.status.setText("VR overlay: stopped.")
+            self._append_log("VR overlay stopped.")
+            log.info("VR overlay stopped")
 
         def _launch_vr_coach_unity(self) -> None:
             """
@@ -288,7 +292,6 @@ def create_launcher_window(auto_start_vr: bool = False):
                 return
             proc = self._vr.overlay_proc
             try:
-                # Drain a bounded number of log lines per tick to keep UI responsive.
                 for _ in range(200):
                     line = self._vr.overlay_log_queue.get_nowait()
                     self._append_log("overlay: " + line.rstrip())
@@ -352,8 +355,8 @@ def cli_main(argv: Optional[list[str]] = None) -> int:
             ov_args.append("--debug")
         return overlay_main(ov_args)
 
-    from PySide6.QtWidgets import QApplication
     from PySide6.QtGui import QIcon
+    from PySide6.QtWidgets import QApplication
 
     app = QApplication(sys.argv)
     app.setApplicationName("LighthouseLayoutCoach")
@@ -383,3 +386,4 @@ def cli_main(argv: Optional[list[str]] = None) -> int:
     w = create_launcher_window(auto_start_vr=False)
     w.show()
     return app.exec()
+

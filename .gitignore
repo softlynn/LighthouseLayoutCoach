@@ -11,6 +11,7 @@ venv/
 # Builds / packaging outputs
 build/
 dist/
+releases/
 *.spec.user
 packaging/redist/*.exe
 
@@ -37,10 +38,6 @@ unity_vr_coach/Obj/
 unity_vr_coach/Build/
 unity_vr_coach/Builds/
 unity_vr_coach/UserSettings/
-unity_vr_coach/ProjectSettings/*
-!unity_vr_coach/ProjectSettings/ProjectVersion.txt
 unity_vr_coach/Assets/Samples/
-unity_vr_coach/Assets/XR/
-unity_vr_coach/Assets/XRI/
 unity_vr_coach/*.sln
 unity_vr_coach/*.csproj

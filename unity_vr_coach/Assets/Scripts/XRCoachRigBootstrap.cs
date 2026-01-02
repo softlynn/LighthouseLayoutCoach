@@ -138,7 +138,6 @@ namespace LighthouseLayoutCoach.VRCoach
             lr.endColor = new Color(lr.startColor.r, lr.startColor.g, lr.startColor.b, 0.1f);
 
             // XRInteractorLineVisual will pick up the LineRenderer automatically (it looks for one on the same GO).
-            line.enabledColorGradient = MakeGradient(lr.startColor);
             line.validColorGradient = MakeGradient(lr.startColor);
             line.invalidColorGradient = MakeGradient(new Color(0.8f, 0.2f, 0.2f, 0.8f));
 

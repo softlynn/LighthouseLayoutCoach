@@ -66,16 +66,20 @@ Source: "{#VcRedistPath}"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterins
 Name: "{group}\Lighthouse Layout Coach (Launcher)"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Lighthouse Layout Coach (Desktop)"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--desktop"
 Name: "{group}\Lighthouse Layout Coach (VR Overlay)"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--vr"
+#ifdef BundleUnityCoach
+Name: "{group}\Lighthouse Layout Coach (VR Coach)"; Filename: "{app}\VRCoach\LighthouseLayoutCoachVRCoach.exe"
+#endif
 Name: "{commondesktop}\Lighthouse Layout Coach"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "Additional icons:"
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch Lighthouse Layout Coach"; Flags: nowait postinstall skipifsilent
+; Install VC++ runtime first (prevents "Failed to load Python DLL" on fresh machines)
 #ifdef BundleVcRedist
-Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Runtime…"; Flags: waituntilterminated runhidden; Check: VcRedistNeedsInstall
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Runtime."; Flags: waituntilterminated runhidden; Check: VcRedistNeedsInstall
 #endif
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch Lighthouse Layout Coach"; Flags: nowait postinstall skipifsilent
 
 [Code]
 function VcRegKey: string;

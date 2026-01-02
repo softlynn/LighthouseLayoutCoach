@@ -4,46 +4,37 @@
 
 [Latest Release](https://github.com/Softlynn/LighthouseLayoutCoach/releases/latest)
 
-Windows desktop app to help optimize **SteamVR Base Station 1.0** placement and reduce **Vive Tracker occlusion** for a hybrid setup (Quest Pro via Virtual Desktop → SteamVR, with OpenVR Space Calibrator alignment already done).
+Windows desktop app and Unity VR Coach to help optimize **SteamVR Base Station 1.0** placement and reduce **Vive Tracker occlusion** for hybrid setups (Quest Pro via Virtual Desktop → SteamVR, with OpenVR Space Calibrator alignment already done).
 
-This app uses **SteamVR/OpenVR as the source of truth** (no Meta/Quest APIs).
+This project uses **SteamVR/OpenXR as the source of truth** (no Meta/Quest APIs).
 
 ## ✨ Features
-
-- Live SteamVR device status (stations + trackers)
-- Guided setup (pick 2 base stations + label 3 trackers by serial)
-- Play-area layout view + heuristic coverage visualization
-- VR Overlay Mode: stable SteamVR dashboard panel + optional VR Coach world overlay
-- Optional historical-log-backed tracking heatmap (read-only prior session data)
+- Desktop device/status view (stations + trackers)
+- Guided setup (pick 2 base stations + label trackers)
+- (Unity) VR Coach: standalone OpenXR app with clickable VR UI
+- Optional SteamVR overlay mode (legacy / troubleshooting)
 
 ## 📦 Download
-
 - Latest release: https://github.com/Softlynn/LighthouseLayoutCoach/releases/latest
 
 ## 🛠️ Build / Dev (Windows)
 
-1) Install Python 3.10+ (64-bit recommended)
-2) Create and activate a venv:
-
+Python app:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
-
-3) Install dependencies:
-
-```powershell
 pip install -r requirements.txt
-```
-
-4) Run:
-
-```powershell
 python -m lighthouse_layout_coach
 ```
 
-Build EXE + optional installer:
+Unity VR Coach:
+- See `docs/unity_vr_coach.md`
+- Scripted build:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build_unity_vr_coach.ps1
+```
 
+Packaged EXE + installer (PyInstaller + Inno Setup):
 ```powershell
 .\scripts\build_windows.ps1
 ```
@@ -53,35 +44,15 @@ Outputs:
 - `dist\Installer\LighthouseLayoutCoach_Setup.exe` (if Inno Setup compiler `ISCC.exe` is installed)
 - Release assets: `dist\release_assets\`
 
-## 🧩 VR Overlay Notes
+## 🧩 VR Notes
 
-Commands:
-- Desktop UI: `python -m lighthouse_layout_coach --desktop`
+Unity VR Coach (recommended):
+- Use the launcher button **Launch VR Coach (Unity)**, or run `releases\VRCoach_Windows\LighthouseLayoutCoachVRCoach.exe` directly.
+
+SteamVR overlay mode (legacy):
 - VR overlay: `python -m lighthouse_layout_coach --vr` (alias: `--overlay`)
 - Overlay smoke submit: `python -m lighthouse_layout_coach --overlay-test`
 
-Modes:
-- **Dashboard Panel**: SteamVR dashboard tab (controls + quick status)
-- **VR Coach**: separate world overlay (playspace view with stations/trackers + optional layers)
-
-Requirements:
-- SteamVR running before starting VR Overlay Mode
-- Allow localhost traffic if prompted (binds to `127.0.0.1` only)
-
-Troubleshooting:
-- If the overlay panel doesn’t appear in the SteamVR dashboard, restart SteamVR and try again.
-
 ## 📁 Logs (Historical Data)
+- Prior runs are stored in `%APPDATA%\LighthouseLayoutCoach\sessions\*.json`
 
-Prior runs are stored in:
-- `%APPDATA%\LighthouseLayoutCoach\sessions\*.json`
-
-These files are treated as read-only data sources for the optional historical heatmap.
-
-## 🧭 Playspace Resolution
-
-Playspace bounds are resolved in SteamVR standing-universe coordinates using:
-1) SteamVR Chaperone (`IVRChaperone.GetPlayAreaRect()` / collision bounds) when available
-2) Default 2m×2m fallback when unavailable
-
-Quest → SteamVR alignment (Virtual Desktop / Space Calibrator) is assumed to already be reflected in SteamVR’s standing origin; the app logs which playspace source was used.

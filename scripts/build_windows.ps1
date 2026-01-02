@@ -26,6 +26,15 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 pip install pyinstaller
 
+# Optional: build Unity VR Coach (if Unity 2022.3.62f3 is installed).
+if (Test-Path "unity_vr_coach") {
+  try {
+    & "scripts\\build_unity_vr_coach.ps1"
+  } catch {
+    Write-Host "WARNING: Unity VR Coach build skipped/failed: $($_.Exception.Message)"
+  }
+}
+
 # Optional: bundle VC++ runtime installer to reduce "Failed to load Python DLL" issues on fresh machines.
 $redistDir = Join-Path $repo "packaging\\redist"
 $vcRedist = Join-Path $redistDir "vc_redist.x64.exe"
@@ -104,6 +113,14 @@ New-Item -ItemType Directory -Force -Path "dist\\release_assets" | Out-Null
 Copy-Item -Force "dist\\LighthouseLayoutCoach.exe" "dist\\release_assets\\LighthouseLayoutCoach.exe"
 if (Test-Path "dist\\Installer\\LighthouseLayoutCoach_Setup.exe") {
   Copy-Item -Force "dist\\Installer\\LighthouseLayoutCoach_Setup.exe" "dist\\release_assets\\LighthouseLayoutCoach_Setup.exe"
+}
+
+# Optional: include the Unity VR Coach build as a zip artifact (standalone).
+if (Test-Path "releases\\VRCoach_Windows\\LighthouseLayoutCoachVRCoach.exe") {
+  $zip = Join-Path $repo "dist\\release_assets\\LighthouseLayoutCoachVRCoach_Windows.zip"
+  if (Test-Path $zip) { Remove-Item -Force $zip }
+  Compress-Archive -Path "releases\\VRCoach_Windows\\*" -DestinationPath $zip
+  Write-Host "Release assets: dist\\release_assets\\LighthouseLayoutCoachVRCoach_Windows.zip"
 }
 Write-Host "Release assets: dist\\release_assets\\LighthouseLayoutCoach.exe"
 Write-Host "Release assets: dist\\release_assets\\LighthouseLayoutCoach_Setup.exe"

@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -19,22 +20,14 @@ namespace LighthouseLayoutCoach.VRCoach
         private static Text _clickTestText;
         private static int _clickCount;
 
-        private void Start()
+        private IEnumerator Start()
         {
-            EnsureCamera();
+            // Wait for the XR rig to create/tag the main camera so we don't accidentally spawn a non-XR camera.
+            var start = Time.realtimeSinceStartup;
+            while (Camera.main == null && (Time.realtimeSinceStartup - start) < 2.0f)
+                yield return null;
+
             EnsureWorldSpaceMenu();
-        }
-
-        private static void EnsureCamera()
-        {
-            if (Camera.main != null)
-                return;
-
-            var camGo = new GameObject("Main Camera");
-            camGo.tag = "MainCamera";
-            camGo.transform.position = new Vector3(0, 1.6f, 0);
-            camGo.AddComponent<Camera>();
-            camGo.AddComponent<AudioListener>();
         }
 
         private static void EnsureWorldSpaceMenu()
