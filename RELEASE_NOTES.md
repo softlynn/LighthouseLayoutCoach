@@ -16,7 +16,8 @@
 - Added `--overlay-test` for submitting a single test frame.
   - `--overlay-test` now exits cleanly when no HMD is detected (no traceback).
   - Dashboard overlay input is explicitly enabled via OpenVR overlay flags and mouse-scale mapping.
-  - Event polling now checks both dashboard handles (main + thumbnail) and logs the first event name per handle to diagnose input routing.
+- Event polling now checks both dashboard handles (main + thumbnail) and logs the first event name per handle to diagnose input routing.
+- Mouse event coordinates are now interpreted correctly whether SteamVR provides normalized (0..1) or pixel-space values.
 
 ## 🧭 Playspace + data
 - Playspace resolution uses SteamVR chaperone bounds when available (with clear source logging).

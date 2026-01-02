@@ -104,6 +104,21 @@ class DashboardOverlayClient:
         self._click_count = 0
         self._logged_first_event_by_handle: dict[int, bool] = {}
 
+    def _mouse_coords_to_px(self, x: float, y: float) -> Tuple[float, float]:
+        """
+        SteamVR/OpenVR mouse event coordinates can be either normalized (0..1) or
+        already in overlay pixel space depending on wrapper/runtime behavior.
+        Treat small values as normalized, otherwise assume pixels.
+        """
+        try:
+            fx = float(x)
+            fy = float(y)
+        except Exception:
+            return (0.0, 0.0)
+        if 0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0:
+            return (fx * float(self.w), fy * float(self.h))
+        return (fx, fy)
+
     def start(self) -> None:
         # SteamVR can take a moment to be ready; retry init briefly instead of crashing.
         init_last: Optional[Exception] = None
@@ -484,8 +499,7 @@ class DashboardOverlayClient:
                     try:
                         nx = float(e.data.mouse.x)
                         ny = float(e.data.mouse.y)
-                        px = nx * float(self.w)
-                        py = ny * float(self.h)
+                        px, py = self._mouse_coords_to_px(nx, ny)
                         log.info(
                             "overlay_first_event handle=%s type=%s mouse_norm=(%.3f,%.3f) mouse_px=(%.1f,%.1f)",
                             handle_int,
@@ -504,8 +518,7 @@ class DashboardOverlayClient:
                     try:
                         nx = float(e.data.mouse.x)
                         ny = float(e.data.mouse.y)
-                        px = nx * float(self.w)
-                        py = ny * float(self.h)
+                        px, py = self._mouse_coords_to_px(nx, ny)
                         self._mouse_px = (px, py)
                         if not self._logged_first_mouse_move:
                             log.info("overlay_first_mouse_move mouse_px=(%.1f,%.1f)", px, py)
@@ -522,8 +535,7 @@ class DashboardOverlayClient:
                 if int(e.eventType) == int(getattr(openvr, "VREvent_MouseButtonDown", 200)):
                     self._click_toggle = not self._click_toggle
                     self._click_count += 1
-                    x = float(e.data.mouse.x) * self.w
-                    y = float(e.data.mouse.y) * self.h
+                    x, y = self._mouse_coords_to_px(float(e.data.mouse.x), float(e.data.mouse.y))
                     for b in self.buttons:
                         if b.hit(x, y):
                             if b.id == "coach":
