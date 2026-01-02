@@ -38,7 +38,7 @@ def create_launcher_window(auto_start_vr: bool = False):
     """
 
     from PySide6.QtCore import QTimer
-    from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget
+    from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
     from .main import create_main_window
 
@@ -59,6 +59,7 @@ def create_launcher_window(auto_start_vr: bool = False):
 
             self.btn_desktop = QPushButton("Desktop App")
             self.btn_vr = QPushButton("VR Overlay Mode")
+            self.btn_vr_coach = QPushButton("Launch VR Coach (Unity)")
             self.btn_stop = QPushButton("Stop")
             self.btn_stop.setEnabled(False)
             self.btn_updates = QPushButton("Check for Updates…")
@@ -66,6 +67,7 @@ def create_launcher_window(auto_start_vr: bool = False):
             top = QHBoxLayout()
             top.addWidget(self.btn_desktop)
             top.addWidget(self.btn_vr)
+            top.addWidget(self.btn_vr_coach)
             top.addWidget(self.btn_stop)
             top.addWidget(self.btn_updates)
             top.addStretch(1)
@@ -81,6 +83,7 @@ def create_launcher_window(auto_start_vr: bool = False):
             self.btn_vr.clicked.connect(self._start_vr)
             self.btn_stop.clicked.connect(self._stop_vr)
             self.btn_updates.clicked.connect(self._check_updates)
+            self.btn_vr_coach.clicked.connect(self._launch_vr_coach_unity)
 
             self._timer = QTimer(self)
             self._timer.timeout.connect(self._tick)
@@ -128,6 +131,7 @@ def create_launcher_window(auto_start_vr: bool = False):
             self.btn_stop.setEnabled(True)
             self.btn_vr.setEnabled(False)
             self.btn_desktop.setEnabled(False)
+            self.btn_vr_coach.setEnabled(False)
 
             url = "http://127.0.0.1:17835"
             from .state_server import StateEngine, serve_state
@@ -237,9 +241,47 @@ def create_launcher_window(auto_start_vr: bool = False):
             self.btn_stop.setEnabled(False)
             self.btn_vr.setEnabled(True)
             self.btn_desktop.setEnabled(True)
+            self.btn_vr_coach.setEnabled(True)
             self.status.setText("VR mode: stopped.")
             self._append_log("VR mode stopped.")
             log.info("VR mode stopped")
+
+        def _launch_vr_coach_unity(self) -> None:
+            """
+            Launches the standalone Unity VR Coach app (no SteamVR overlays).
+            For installed builds, expects the Unity build under `<install>/VRCoach/`.
+            For source checkouts, looks under `releases/VRCoach_Windows/`.
+            """
+            try:
+                from pathlib import Path
+
+                exe = None
+                if _is_frozen():
+                    base = Path(sys.executable).resolve().parent
+                    cand = base / "VRCoach" / "LighthouseLayoutCoachVRCoach.exe"
+                    if cand.exists():
+                        exe = cand
+                else:
+                    base = Path(__file__).resolve().parents[1]
+                    cand = base / "releases" / "VRCoach_Windows" / "LighthouseLayoutCoachVRCoach.exe"
+                    if cand.exists():
+                        exe = cand
+
+                if exe is None:
+                    QMessageBox.information(
+                        self,
+                        "VR Coach not installed",
+                        "Unity VR Coach build not found.\n\n"
+                        "Build it from `unity_vr_coach/` and place the Windows build at:\n"
+                        "- Installed app: `VRCoach/LighthouseLayoutCoachVRCoach.exe`\n"
+                        "- Source checkout: `releases/VRCoach_Windows/LighthouseLayoutCoachVRCoach.exe`",
+                    )
+                    return
+
+                self._append_log(f"Launching VR Coach: {exe}")
+                subprocess.Popen([str(exe)], cwd=str(exe.parent))
+            except Exception as e:
+                self._append_log(f"Failed to launch VR Coach: {type(e).__name__}: {e}")
 
         def _tick(self) -> None:
             if self._vr is None:

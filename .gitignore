@@ -28,3 +28,17 @@ config.json
 *.log
 .DS_Store
 Thumbs.db
+
+# Unity
+unity_vr_coach/Library/
+unity_vr_coach/Temp/
+unity_vr_coach/Logs/
+unity_vr_coach/Obj/
+unity_vr_coach/Build/
+unity_vr_coach/Builds/
+unity_vr_coach/UserSettings/
+unity_vr_coach/ProjectSettings/*
+!unity_vr_coach/ProjectSettings/ProjectVersion.txt
+unity_vr_coach/Assets/Samples/
+unity_vr_coach/*.sln
+unity_vr_coach/*.csproj

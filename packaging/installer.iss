@@ -9,6 +9,7 @@
 
 #define VcRedistPath "..\\packaging\\redist\\vc_redist.x64.exe"
 #define OverlayHelperPath "..\\dist\\overlay\\LighthouseLayoutCoachOverlay.exe"
+#define UnityCoachExePath "..\\releases\\VRCoach_Windows\\LighthouseLayoutCoachVRCoach.exe"
 
 #ifexist "{#VcRedistPath}"
 #define BundleVcRedist
@@ -16,6 +17,10 @@
 
 #ifexist "{#OverlayHelperPath}"
 #define BundleOverlayHelper
+#endif
+
+#ifexist "{#UnityCoachExePath}"
+#define BundleUnityCoach
 #endif
 
 [Setup]
@@ -47,6 +52,10 @@ Source: "..\dist\LighthouseLayoutCoach\*"; DestDir: "{app}"; Flags: ignoreversio
 ; Onedir overlay helper (avoids onefile temp extraction/cleanup dialogs when starting/stopping VR mode)
 #ifdef BundleOverlayHelper
 Source: "{#OverlayHelperPath}"; DestDir: "{app}\overlay"; Flags: ignoreversion
+#endif
+; Optional Unity VR Coach build (installed under {app}\VRCoach\)
+#ifdef BundleUnityCoach
+Source: "..\releases\VRCoach_Windows\*"; DestDir: "{app}\VRCoach"; Flags: ignoreversion recursesubdirs createallsubdirs
 #endif
 ; Optional dependency installer (bundled by scripts/build_windows.ps1 when available)
 #ifdef BundleVcRedist
