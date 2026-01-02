@@ -260,6 +260,7 @@ def create_launcher_window(auto_start_vr: bool = False):
                 from pathlib import Path
 
                 exe = None
+                base = None
                 if _is_frozen():
                     base = Path(sys.executable).resolve().parent
                     cand = base / "VRCoach" / "LighthouseLayoutCoachVRCoach.exe"
@@ -272,20 +273,92 @@ def create_launcher_window(auto_start_vr: bool = False):
                         exe = cand
 
                 if exe is None:
-                    QMessageBox.information(
-                        self,
-                        "VR Coach not installed",
+                    if base is None:
+                        return
+
+                    msg = (
                         "Unity VR Coach build not found.\n\n"
-                        "Build it from `unity_vr_coach/` and place the Windows build at:\n"
-                        "- Installed app: `VRCoach/LighthouseLayoutCoachVRCoach.exe`\n"
-                        "- Source checkout: `releases/VRCoach_Windows/LighthouseLayoutCoachVRCoach.exe`",
+                        "If you installed via the setup installer, this usually means the installer wasn't run (or VR Coach wasn't bundled).\n\n"
+                        "Do you want to download the VR Coach zip from the latest GitHub release and install it now?"
                     )
+                    resp = QMessageBox.question(self, "VR Coach not installed", msg, QMessageBox.Yes | QMessageBox.No)
+                    if resp == QMessageBox.Yes:
+                        self._download_and_install_vr_coach(base)
                     return
 
                 self._append_log(f"Launching VR Coach: {exe}")
                 subprocess.Popen([str(exe)], cwd=str(exe.parent))
             except Exception as e:
                 self._append_log(f"Failed to launch VR Coach: {type(e).__name__}: {e}")
+
+        def _download_and_install_vr_coach(self, base_dir) -> None:
+            from pathlib import Path
+            import tempfile
+            import zipfile
+
+            from .update_checker import DEFAULT_REPO, fetch_latest_release
+
+            base_dir = Path(base_dir)
+
+            def ui_log(s: str) -> None:
+                QTimer.singleShot(0, lambda: self._append_log(s))
+
+            def ui_msg(title: str, text: str) -> None:
+                QTimer.singleShot(0, lambda: QMessageBox.information(self, title, text))
+
+            def worker() -> None:
+                try:
+                    info = fetch_latest_release(DEFAULT_REPO)
+                    if not info or not info.vrcoach_url:
+                        ui_msg("Download unavailable", "Latest release does not include the VR Coach zip asset.")
+                        return
+
+                    url = info.vrcoach_url
+                    tmpdir = Path(tempfile.gettempdir()) / "LighthouseLayoutCoach"
+                    tmpdir.mkdir(parents=True, exist_ok=True)
+                    zip_path = tmpdir / "LighthouseLayoutCoachVRCoach_Windows.zip"
+
+                    ui_log(f"Downloading VR Coach: {url}")
+                    req = urllib.request.Request(url, headers={"User-Agent": "LighthouseLayoutCoach"})
+                    with urllib.request.urlopen(req, timeout=60.0) as r, open(zip_path, "wb") as f:
+                        while True:
+                            chunk = r.read(256 * 1024)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+
+                    dest_dir = base_dir / "VRCoach"
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+
+                    ui_log(f"Installing VR Coach to: {dest_dir}")
+                    with zipfile.ZipFile(zip_path) as zf:
+                        for member in zf.infolist():
+                            name = member.filename.replace("\\", "/")
+                            if not name or name.endswith("/"):
+                                continue
+                            if name.startswith("/") or ".." in name.split("/"):
+                                continue
+                            out_path = (dest_dir / name).resolve()
+                            if dest_dir.resolve() not in out_path.parents and out_path != dest_dir.resolve():
+                                continue
+                            out_path.parent.mkdir(parents=True, exist_ok=True)
+                            with zf.open(member, "r") as src, open(out_path, "wb") as dst:
+                                dst.write(src.read())
+
+                    exe = dest_dir / "LighthouseLayoutCoachVRCoach.exe"
+                    if not exe.exists():
+                        ui_msg(
+                            "Install incomplete",
+                            "VR Coach extraction finished, but the executable was not found. Re-run the installer from the GitHub release.",
+                        )
+                        return
+
+                    ui_log("VR Coach installed.")
+                    QTimer.singleShot(0, lambda: subprocess.Popen([str(exe)], cwd=str(exe.parent)))
+                except Exception as e:
+                    ui_msg("VR Coach install failed", f"{type(e).__name__}: {e}")
+
+            threading.Thread(target=worker, name="VRCoachInstaller", daemon=True).start()
 
         def _tick(self) -> None:
             if self._vr is None:
@@ -386,4 +459,3 @@ def cli_main(argv: Optional[list[str]] = None) -> int:
     w = create_launcher_window(auto_start_vr=False)
     w.show()
     return app.exec()
-

@@ -19,6 +19,7 @@ from .version import is_newer, read_version
 
 DEFAULT_REPO = "Softlynn/LighthouseLayoutCoach"
 INSTALLER_ASSET_NAME = "LighthouseLayoutCoach_Setup.exe"
+VRCOACH_ASSET_NAME = "LighthouseLayoutCoachVRCoach_Windows.zip"
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,8 @@ class ReleaseInfo:
     html_url: str
     installer_url: str
     installer_size: Optional[int]
+    vrcoach_url: Optional[str]
+    vrcoach_size: Optional[int]
 
 
 def _utc_now_iso() -> str:
@@ -63,20 +66,38 @@ def fetch_latest_release(repo: str) -> Optional[ReleaseInfo]:
     assets = data.get("assets") or []
     installer_url = ""
     installer_size: Optional[int] = None
+    vrcoach_url: Optional[str] = None
+    vrcoach_size: Optional[int] = None
     for a in assets:
-        if str(a.get("name")) == INSTALLER_ASSET_NAME:
+        name = str(a.get("name") or "")
+        if name == INSTALLER_ASSET_NAME:
             installer_url = str(a.get("browser_download_url") or "")
             try:
                 installer_size = int(a.get("size")) if a.get("size") is not None else None
             except Exception:
                 installer_size = None
-            break
+        elif name == VRCOACH_ASSET_NAME:
+            vrcoach_url = str(a.get("browser_download_url") or "")
+            try:
+                vrcoach_size = int(a.get("size")) if a.get("size") is not None else None
+            except Exception:
+                vrcoach_size = None
 
     if not tag or not html or not installer_url:
         return None
     if not _https_only(installer_url):
         return None
-    return ReleaseInfo(tag_name=tag, html_url=html, installer_url=installer_url, installer_size=installer_size)
+    if vrcoach_url and not _https_only(vrcoach_url):
+        vrcoach_url = None
+        vrcoach_size = None
+    return ReleaseInfo(
+        tag_name=tag,
+        html_url=html,
+        installer_url=installer_url,
+        installer_size=installer_size,
+        vrcoach_url=vrcoach_url,
+        vrcoach_size=vrcoach_size,
+    )
 
 
 def _sanity_size_ok(size: Optional[int]) -> bool:

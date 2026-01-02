@@ -1,5 +1,8 @@
 # Release Notes
 
+## 🧩 Fix: VR Coach “not installed”
+- If the Unity VR Coach build isn’t present next to the launcher, the launcher can now download and install `LighthouseLayoutCoachVRCoach_Windows.zip` automatically.
+
 ## 🕹️ Unity VR Coach (new)
 - Adds a standalone Unity/OpenXR VR Coach app (no SteamVR overlays) and a launcher button to start it.
 - Build via `scripts/build_unity_vr_coach.ps1` (outputs to `releases/VRCoach_Windows/` and is bundled by the installer when present).
@@ -30,4 +33,3 @@
 
 ## 🔄 Updates
 - Launcher includes a `Check for Updates.` button (same update check used in the desktop app).
-
